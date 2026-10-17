@@ -1,0 +1,11 @@
+# 这两个文件要在 Linux 容器里执行，必须是 LF。
+# （Windows 上 clone 出来若被转成 CRLF，Dockerfile 能忍，shell 脚本会直接报
+#  "bash\r: No such file or directory"，所以在这里钉死。）
+*.sh text eol=lf
+deploy/entrypoint.sh text eol=lf
+deploy/Dockerfile text eol=lf
+
+# Windows 批处理必须钉成 CRLF：cmd.exe 读 LF-only 的 .bat 会错位解析，
+# 症状是每行开头被吃掉几个字符、刷一屏 "xxx 不是内部或外部命令"。
+# （2026-10 踩过一次：自动生成的 公网访问.bat 是 LF，双击直接炸。）
+*.bat text eol=crlf

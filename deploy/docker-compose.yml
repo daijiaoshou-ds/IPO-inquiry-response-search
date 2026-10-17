@@ -1,0 +1,21 @@
+# 有 Docker 的机器上，一条命令起站：
+#     docker compose -f deploy/docker-compose.yml up -d --build
+# 数据库是从宿主机 ../data/queries.db 只读挂进去的，不动它一根毫毛。
+services:
+  wenxun:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: wenxun:latest
+    container_name: wenxun
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      QX_DB: /data/queries.db
+      HOST: 0.0.0.0
+      PORT: "8765"
+      # 对外开的口令，格式 用户名:密码；留空则不校验
+      AUTH: "${AUTH:-}"
+    volumes:
+      - ../data:/data:ro

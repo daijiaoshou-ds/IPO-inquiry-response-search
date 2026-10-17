@@ -1,0 +1,19 @@
+# 构建上下文是【项目根目录】，但镜像里只需要 src/ 和 deploy/。
+# 把这些排除掉，否则 3.5 GB 的 PDF 会被打包发给 docker daemon。
+.git/
+.venv/
+probe/
+tools/
+docs/
+scripts/
+__pycache__/
+**/__pycache__/
+问询函/
+问询函_创业板/
+问询函_新三板/
+data/
+*.pdf
+*.png
+*.db
+*.db-wal
+*.db-shm

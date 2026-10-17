@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+
+# 索引库是本地产物（几百 MB），不进 git
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# 原始 PDF
+问询函/
+*.pdf
+
+# 离线包产物与下载缓存
+pack/_out/
+pack/_cache/
+tools/

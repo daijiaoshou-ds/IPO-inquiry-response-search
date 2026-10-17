@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>问询检索 · 使用说明</title>
+<style>
+  :root { --fg:#0f172a; --fg2:#475569; --muted:#8896a9; --line:#e6e8ec; --bg:#f2f4f8;
+          --panel:#fff; --accent:#4f46e5; --soft:#eef1ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:15px/1.85 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size:24px; margin:0 0 6px; letter-spacing:.3px; }
+  .sub { color:var(--muted); font-size:13.5px; margin-bottom:28px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px;
+          padding:22px 24px; margin:0 0 18px; box-shadow:0 1px 2px rgba(15,23,42,.04); }
+  h2 { font-size:16px; margin:0 0 12px; }
+  ol, ul { margin:0; padding-left:22px; }
+  li { margin:7px 0; }
+  code, .k { background:var(--soft); color:var(--accent); border-radius:5px;
+             padding:1px 6px; font-family:Consolas,monospace; font-size:13.5px; }
+  .big { font-size:17px; font-weight:600; color:var(--accent); }
+  .warn { border-left:3px solid #d08700; background:#fffaf0; padding:12px 16px;
+          border-radius:0 8px 8px 0; margin:12px 0; font-size:14px; }
+  .muted { color:var(--muted); font-size:13px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td { padding:7px 0; border-bottom:1px solid var(--line); vertical-align:top; }
+  td:first-child { width:132px; color:var(--fg2); }
+  .foot { text-align:center; color:var(--muted); font-size:12.5px; margin-top:32px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>问询检索 · 离线版</h1>
+  <div class="sub">把自家被问的问题贴进去，找出别的公司被问过的同款问题，去看它们怎么答。</div>
+
+  <div class="card">
+    <h2>怎么开始（三步）</h2>
+    <ol>
+      <li><b>解压</b>：把压缩包解压到<b>桌面</b>或 <b>D 盘</b>，得到一个文件夹。</li>
+      <li><b>双击文件夹里的 <span class="k">启动.bat</span></b>。</li>
+      <li>会弹出一个黑色窗口，几秒后<b>浏览器自动打开</b>。没打开就手动访问 <code>http://127.0.0.1:8765</code>。</li>
+    </ol>
+    <div class="warn">
+      <b>不要直接在压缩包里双击。</b>先在压缩软件里点"解压到当前文件夹"，等进度跑完再双击 <span class="k">启动.bat</span>。<br>
+      也<b>不要</b>解压到 <code>C:\Program Files</code>——那里没有写权限，第一次建索引会失败。
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>第一次打开会慢几秒</h2>
+    <p style="margin:0 0 8px">第一次运行时，程序要在你电脑上建立检索索引（约 <b>6 秒</b>），窗口里会显示进度。
+       建好之后就<b>秒开</b>，以后不用再等。全部在本机完成，<b>不联网、不上传任何内容</b>。</p>
+    <p class="muted" style="margin:0">解压后约 300 MB，索引建完约 440 MB，请留够磁盘空间。</p>
+  </div>
+
+  <div class="card">
+    <h2>常见问题</h2>
+    <table>
+      <tr><td>杀毒软件报警</td>
+          <td>误报。程序是 Python 脚本 + 官方 Python 解释器，<b>不联网、不写注册表、不自启</b>。
+              添加到信任 / 放行即可。</td></tr>
+      <tr><td>提示"Windows 已保护你的电脑"</td>
+          <td>因为文件是从网盘下载的。点 <b>更多信息 → 仍要运行</b>。</td></tr>
+      <tr><td>窗口一闪就没了</td>
+          <td>说明出错了。文件夹里会生成 <span class="k">启动日志.txt</span>，把它发给作者。</td></tr>
+      <tr><td>浏览器打开是空白</td>
+          <td>稍等两秒刷新。还不行就看窗口里提示的端口号，手动在地址栏输入。</td></tr>
+      <tr><td>端口被占用</td>
+          <td>不用管，程序会自己往后找一个空闲端口（8766、8767…），窗口里会显示实际地址。</td></tr>
+      <tr><td>能不能给同事一起用</td>
+          <td>可以。把整个文件夹复制给他就行，或者让他自己下载一份。</td></tr>
+      <tr><td>Mac 能用吗</td>
+          <td>暂时不行，目前只做了 Windows 版。</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>数据说明</h2>
+    <table>
+      <tr><td>数据来源</td><td>沪深北交易所公开披露的审核问询函及其回复</td></tr>
+      <tr><td>覆盖板块</td><td>__BOARDS__</td></tr>
+      <tr><td>数据截至</td><td>__RELEASE__</td></tr>
+      <tr><td>收录规模</td><td>__LETTERS__ 份问询函 · __COMPANIES__ 家公司 · __QUERIES__ 条问题</td></tr>
+    </table>
+    <p class="muted" style="margin:12px 0 0">
+      本工具仅供学习与研究参考，<b>不构成审计意见、投资建议或任何形式的专业结论</b>；
+      检索结果的准确性、完整性以交易所原始披露文件为准。如有侵权，请联系删除。
+    </p>
+  </div>
+
+  <div class="foot">呆叫兽 整理 · 免费分享，请勿用于商业用途</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>问询回复检索</title>
+<style>
+  :root {
+    --bg: #f2f4f8;
+    --panel: #ffffff;
+    --text: #0f172a;
+    --text-2: #475569;
+    --muted: #8896a9;
+    --border: #e6e8ec;
+    --accent: #4f46e5;
+    --accent-2: #6366f1;
+    --accent-soft: #eef1ff;
+    --quote-bg: #f8fafc;
+    --ok: #0f9d6a;
+    --mid: #d08700;
+    --low: #94a3b8;
+    --shadow: 0 1px 2px rgba(15,23,42,.04), 0 8px 24px -12px rgba(15,23,42,.18);
+    --shadow-lg: 0 2px 4px rgba(15,23,42,.05), 0 16px 36px -16px rgba(15,23,42,.30);
+    --grad: linear-gradient(135deg, var(--accent), var(--accent-2));
+    --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+    --aside-w: 300px;
+    --split-w: 28px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1014;
+      --panel: #171a21;
+      --text: #e8eaef;
+      --text-2: #b2bac6;
+      --muted: #7d8797;
+      --border: #262b35;
+      --accent: #818cf8;
+      --accent-2: #a5b4fc;
+      --accent-soft: #1e2233;
+      --quote-bg: #1c2029;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+      --shadow-lg: 0 2px 6px rgba(0,0,0,.5), 0 18px 40px -18px rgba(0,0,0,.85);
+    }
+  }
+  * { box-sizing: border-box; }
+  ::selection { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border: 3px solid transparent;
+                              background-clip: content-box; border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+  html { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1100px 420px at 8% -10%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 70%),
+      radial-gradient(900px 360px at 96% -14%, color-mix(in srgb, var(--ok) 9%, transparent), transparent 70%),
+      var(--bg);
+    background-attachment: fixed;
+    color: var(--text);
+    font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body.resizing { cursor: col-resize; user-select: none; }
+
+  header {
+    position: sticky; top: 0; z-index: 20; padding: 13px 28px;
+    background: color-mix(in srgb, var(--panel) 82%, transparent);
+    backdrop-filter: saturate(180%) blur(14px);
+    border-bottom: 1px solid var(--border);
+  }
+  /* 和 main 同宽同边距，标题才不会跟下面那栏错开 */
+  .head-inner { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+                max-width: 1520px; width: 100%; margin: 0 auto; }
+  .brand { display: flex; align-items: center; gap: 11px; }
+  .logo { flex: none; width: 36px; height: 36px; border-radius: 11px; display: grid;
+          place-items: center; font-size: 17px; background: var(--grad);
+          box-shadow: 0 7px 18px -9px var(--accent); }
+  .brand-text { display: flex; flex-direction: column; justify-content: center; }
+  .brand-text b { font-size: 16.5px; letter-spacing: .2px; line-height: 1.35; }
+  .brand-text span { color: var(--muted); font-size: 12.5px; line-height: 1.35; }
+  .stats { margin-left: auto; display: flex; gap: 9px; flex-wrap: wrap; }
+  .stats div { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25;
+               padding: 5px 12px; border-radius: 11px; font-size: 11.5px; color: var(--muted);
+               background: color-mix(in srgb, var(--panel) 72%, transparent);
+               border: 1px solid var(--border); }
+  .stats b { font-size: 15px; color: var(--text); font-variant-numeric: tabular-nums; }
+
+  main { display: flex; align-items: flex-start; gap: 0;
+         max-width: 1520px; margin: 0 auto; padding: 24px 28px 96px; }
+  section { flex: 1 1 auto; min-width: 0; }
+  aside { flex: 0 0 var(--aside-w); position: sticky; top: 84px; align-self: flex-start;
+          max-height: calc(100vh - 104px); overflow-y: auto; overflow-x: hidden;
+          padding-right: 2px; }
+
+  .splitter { flex: 0 0 var(--split-w); align-self: stretch; position: relative;
+              cursor: col-resize; outline: none; }
+  .splitter::after { content: ''; position: absolute; top: 50%; left: 50%;
+                     width: 6px; height: 46px; transform: translate(-50%, -50%);
+                     border-radius: 999px; background: var(--border);
+                     transition: background .15s ease, height .15s ease; }
+  .splitter:hover::after, .splitter:focus-visible::after, .splitter.dragging::after {
+    background: var(--accent); height: 70px;
+  }
+
+  .panel { background: var(--panel); border: 1px solid var(--border);
+           border-radius: 16px; padding: 15px 17px; box-shadow: var(--shadow); }
+  aside .panel + .panel { margin-top: 14px; }
+  .sec-title { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700;
+               letter-spacing: .08em; color: var(--muted); margin: 2px 0 13px; }
+  .sec-title::before { content: ''; width: 3px; height: 12px; border-radius: 2px;
+                       background: var(--grad); flex: none; }
+  label.field { display: block; margin-bottom: 13px; }
+  label.field > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  label.field > i { display: block; font-style: normal; font-size: 11.5px; color: var(--muted);
+                    line-height: 1.5; margin-top: 5px; }
+  select, textarea, input {
+    width: 100%; font: inherit; color: var(--text); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; outline: none;
+    transition: border-color .14s ease, box-shadow .14s ease;
+  }
+  select { appearance: none; padding-right: 30px; background-repeat: no-repeat;
+           background-position: right 10px center; background-size: 12px;
+           background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5 6 8.5 10 4.5' fill='none' stroke='%238896a9' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+  select:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+  select:focus, textarea:focus { border-color: var(--accent); box-shadow: var(--ring); }
+  .check { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0; font-size: 13.5px;
+           color: var(--text-2); cursor: pointer; }
+  .check input { width: auto; margin-top: 3px; accent-color: var(--accent); }
+  .check i { display: block; font-style: normal; color: var(--muted); font-size: 12px; line-height: 1.5; }
+  .board-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .board-tabs button {
+    font: inherit; font-size: 13px; padding: 6px 13px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--border); background: transparent; color: var(--muted);
+    transition: background .14s ease, color .14s ease, border-color .14s ease, box-shadow .14s ease;
+  }
+  .board-tabs button:hover:not(:disabled):not(.on) { border-color: var(--accent); color: var(--accent); }
+  .board-tabs button.on { background: var(--grad); border-color: transparent; color: #fff;
+                          box-shadow: 0 6px 16px -9px var(--accent); }
+  .board-tabs button:disabled { opacity: .45; cursor: not-allowed; }
+  .kv { margin: 0; font-size: 13px; }
+  .kv div { display: flex; align-items: baseline; justify-content: space-between;
+            gap: 10px; padding: 5px 0; border-bottom: 1px dashed var(--border); }
+  .kv div:last-child { border-bottom: 0; }
+  .kv dt { color: var(--muted); flex: none; }
+  .kv dd { margin: 0; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+
+  .search-card { background: var(--panel); border: 1px solid var(--border);
+                 border-radius: 18px; padding: 18px 18px 16px; box-shadow: var(--shadow); }
+  .search-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .search-title { font-size: 13.5px; font-weight: 700; }
+  .search-sub { font-size: 12px; color: var(--muted); }
+  textarea { min-height: 172px; resize: vertical; line-height: 1.8; padding: 13px 15px;
+             font-size: 15px; }
+  textarea::placeholder { color: var(--muted); }
+  .tools { display: flex; align-items: center; gap: 12px; margin-top: 13px; flex-wrap: wrap; }
+  .tools .hint { color: var(--muted); font-size: 12.5px; }
+  kbd { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; padding: 1px 6px;
+        border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px;
+        background: var(--quote-bg); color: var(--text-2); }
+  button.primary {
+    margin-left: auto; font: inherit; font-weight: 600; color: #fff; cursor: pointer;
+    background: var(--grad); border: 0; border-radius: 11px; padding: 11px 30px;
+    box-shadow: 0 8px 20px -10px var(--accent);
+    transition: transform .12s ease, box-shadow .16s ease, filter .16s ease;
+  }
+  button.primary:hover:not(:disabled) { transform: translateY(-1px); filter: saturate(1.1);
+                                        box-shadow: 0 12px 26px -11px var(--accent); }
+  button.primary:active:not(:disabled) { transform: translateY(0); }
+  button.primary:disabled { opacity: .65; cursor: progress; transform: none; }
+  .chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 13px; }
+  .chips button {
+    font: inherit; font-size: 12.5px; color: var(--text-2); cursor: pointer;
+    background: transparent; border: 1px dashed var(--border); border-radius: 999px; padding: 4px 12px;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    transition: border-color .14s ease, color .14s ease, background .14s ease;
+  }
+  .chips button:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .chips .chips-label { color: var(--muted); font-size: 12.5px; }
+
+  #results { margin-top: 22px; }
+  .banner { display: flex; align-items: center; gap: 10px; padding: 11px 15px; border-radius: 12px;
+            font-size: 14px; margin-bottom: 14px; }
+  .banner.split { background: var(--accent-soft); color: var(--accent-2); }
+  .banner.warn { background: #fff7e6; color: #a15c00; }
+  @media (prefers-color-scheme: dark) { .banner.warn { background: #2c2415; color: #e2b866; } }
+  .parts { list-style: none; margin: 0 0 18px; padding: 0; }
+  .parts li { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--border);
+              font-size: 13.5px; color: var(--text-2); }
+  .parts li:last-child { border-bottom: 0; }
+  .parts em { font-style: normal; flex: none; width: 20px; height: 20px; border-radius: 50%;
+              background: var(--accent-soft); color: var(--accent-2); font-size: 11.5px;
+              display: grid; place-items: center; margin-top: 2px; font-weight: 700; }
+
+  .group { margin-bottom: 28px; animation: rise .2s ease both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+  .group-head { display: flex; gap: 11px; align-items: flex-start; margin-bottom: 13px; }
+  .group-head em { font-style: normal; flex: none; width: 25px; height: 25px; border-radius: 8px;
+                   background: var(--grad); color: #fff; font-size: 13px; font-weight: 700;
+                   display: grid; place-items: center; margin-top: 1px;
+                   box-shadow: 0 6px 14px -8px var(--accent); }
+  .group-head p { margin: 0; font-size: 15px; font-weight: 600; color: var(--text);
+                  line-height: 1.7; word-break: break-word; }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+          padding: 14px 18px; margin-bottom: 12px; box-shadow: var(--shadow);
+          border-left: 4px solid var(--low);
+          transition: box-shadow .16s ease, transform .16s ease, border-color .16s ease; }
+  .card:hover { box-shadow: var(--shadow-lg); transform: translateY(-1px); }
+  .card.high { border-left-color: var(--ok); }
+  .card.mid { border-left-color: var(--mid); }
+  .card-top { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .rank { flex: none; width: 21px; height: 21px; border-radius: 7px; display: grid; place-items: center;
+          font-size: 11.5px; font-weight: 700; color: var(--muted);
+          border: 1px solid var(--border); background: var(--quote-bg); }
+  .card.high .rank { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+                     background: color-mix(in srgb, var(--ok) 10%, transparent); }
+  .card.mid .rank { color: var(--mid); border-color: color-mix(in srgb, var(--mid) 40%, transparent);
+                    background: color-mix(in srgb, var(--mid) 11%, transparent); }
+  .who { font-weight: 700; font-size: 14.5px; }
+  .tag { font-size: 11.5px; padding: 2px 8px; border-radius: 6px;
+         background: var(--accent-soft); color: var(--accent-2); white-space: nowrap; }
+  .tag.plain { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .score { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .score .bar { width: 84px; height: 7px; border-radius: 4px; background: var(--border); overflow: hidden; }
+  .score .bar i { display: block; height: 100%; border-radius: 4px; }
+  .score b { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .card .qtitle { margin-top: 9px; font-size: 13.5px; color: var(--text-2); }
+  .card .meta { margin-top: 4px; font-size: 12.5px; color: var(--muted); }
+  blockquote { margin: 11px 0 0; padding: 12px 15px; background: var(--quote-bg);
+               border-left: 3px solid var(--border); border-radius: 8px;
+               font-size: 14.5px; line-height: 1.85; word-break: break-word; }
+  mark { background: #ffe9a8; color: inherit; padding: 0 2px; border-radius: 3px; }
+  @media (prefers-color-scheme: dark) { mark { background: #6b5a1e; color: #ffeab0; } }
+  .card-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+  .card-foot code { font-size: 12px; color: var(--muted); font-family: ui-monospace, Consolas, monospace; }
+  .ghost { margin-left: auto; font: inherit; font-size: 12.5px; cursor: pointer; color: var(--accent);
+           background: transparent; border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px;
+           transition: border-color .14s ease, background .14s ease; }
+  .ghost:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .siblings { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
+  .siblings div { padding: 7px 0; border-bottom: 1px dashed var(--border);
+                  font-size: 13.5px; color: var(--text-2); line-height: 1.7; }
+  .siblings div:last-child { border-bottom: 0; }
+  .siblings b { color: var(--muted); font-weight: 500; font-size: 12.5px; margin-right: 6px; }
+  .attn { background: var(--quote-bg); border: 1px solid var(--border); border-radius: 12px;
+          padding: 10px 14px; margin-bottom: 14px; }
+  .attn-head { font-size: 12px; color: var(--muted); margin-bottom: 7px; }
+  .attn-text { font-size: 13.5px; line-height: 2; word-break: break-word; }
+  .attn-text u.weak { text-decoration: underline dotted var(--mid); text-underline-offset: 5px; }
+  .attn-text .miss { color: var(--muted); }
+  .attn-tip { margin-top: 7px; font-size: 11.5px; color: var(--muted); line-height: 1.7; }
+  .attn-tip i { font-style: normal; }
+  .empty { color: var(--muted); font-size: 14px; padding: 10px 2px; }
+  .spin { display: inline-block; width: 13px; height: 13px; margin-right: 7px; vertical-align: -2px;
+          border: 2px solid rgba(255,255,255,.45); border-top-color: #fff; border-radius: 50%;
+          animation: r .7s linear infinite; }
+  @keyframes r { to { transform: rotate(360deg); } }
+
+  @media (max-width: 880px) {
+    header { padding-left: 16px; padding-right: 16px; }
+    main { flex-direction: column; gap: 16px; padding: 16px; }
+    aside { flex: none; width: auto; position: static; max-height: none; overflow: visible; }
+    .splitter { display: none; }
+    .stats { margin-left: 0; width: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+  .about { margin: 4px 14px 16px; padding: 12px 12px 0; font-size: 11.5px; line-height: 1.85;
+           color: var(--muted); border-top: 1px solid var(--border); }
+  .about b { color: var(--text-2); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+ <div class="head-inner">
+  <div class="brand">
+    <span class="logo">📑</span>
+    <span class="brand-text">
+      <b>问询回复检索</b>
+      <span>找别的公司被问过的同款问题，去看它们怎么答</span>
+    </span>
+  </div>
+  <div class="stats" id="stats"></div>
+ </div>
+</header>
+
+<main>
+  <aside>
+    <div class="panel">
+      <div class="sec-title">检索范围</div>
+      <div class="board-tabs" id="boards"></div>
+      <label class="field" style="margin-top:14px">
+        <span>章节</span>
+        <select id="chapter"></select>
+        <i>第二轮及以后的问询函不按章节组织，不受此过滤影响。</i>
+      </label>
+      <label class="field">
+        <span>轮次</span>
+        <select id="round"></select>
+      </label>
+      <label class="field">
+        <span>每组最多返回</span>
+        <select id="top">
+          <option value="3">3 条</option>
+          <option value="5" selected>5 条</option>
+          <option value="10">10 条</option>
+          <option value="20">20 条</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="expand">
+        <span>扩大搜索范围<i>跨章节搜索。同一条问题在不同公司可能被放进不同章节，硬过滤会漏。</i></span>
+      </label>
+      <label class="check"><input type="checkbox" id="boiler">
+        <span>显示套话<i>如「核查上述事项并发表明确意见」，这类问题跨公司会 100% 命中，默认隐藏。</i></span>
+      </label>
+    </div>
+    <div class="panel">
+      <div class="sec-title">库内数据</div>
+      <dl class="kv" id="libinfo"></dl>
+    </div>
+    <div class="about">
+      数据：沪深北交易所公开披露的审核问询函<br>
+      数据截至 <span id="about-date">2026-10</span> · 作者 <b>呆叫兽</b><br>
+      仅供学习参考，不构成审计或投资意见，以原始披露文件为准
+    </div>
+  </aside>
+
+  <div class="splitter" id="splitter" role="separator" aria-orientation="vertical"
+       tabindex="0" title="拖动调整左侧宽度，双击恢复默认"
+       aria-label="拖动调整左侧宽度，双击恢复默认"></div>
+
+  <section>
+    <div class="search-card">
+      <div class="search-head">
+        <span class="search-title">问题原文</span>
+        <span class="search-sub">整段粘贴即可，内部会拆成多个最小 query 分别检索</span>
+      </div>
+      <textarea id="q" spellcheck="false" placeholder="把自家被问的问题粘进来（支持整段粘贴）&#10;&#10;例如：（1）期间费用核算准确性。根据申请文件：……请发行人：①说明销售费用明细项核算的具体内容……"></textarea>
+      <div class="tools">
+        <span class="hint">按 <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + <kbd>Enter</kbd> 直接搜索</span>
+        <button class="primary" id="go">搜索</button>
+      </div>
+      <div class="chips" id="chips"></div>
+    </div>
+    <div id="results"></div>
+  </section>
+</main>
+
+<script>
+var $ = function (id) { return document.getElementById(id); };
+var state = { stats: null, board: '北交所' };
+
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function markSpans(t, spans) {
+  t = t || '';
+  var out = [], pos = 0;
+  (spans || []).forEach(function (s) {
+    var a = s[0], b = s[1];
+    if (a < pos || b > t.length || b <= a) { return; }
+    if (a > pos) { out.push(esc(t.slice(pos, a))); }
+    out.push('<mark>' + esc(t.slice(a, b)) + '</mark>');
+    pos = b;
+  });
+  out.push(esc(t.slice(pos)));
+  return out.join('');
+}
+
+// 所有真实重合片段都标出来。以前只标最长的那一段，会让人误以为
+// 算法只看了那一块 —— 其实另外几段也算进分数了，只是没画出来。
+function mark(h) {
+  var spans = h.hl_spans;
+  if (!spans || !spans.length) {
+    spans = (h.hl_end > h.hl_start) ? [[h.hl_start, h.hl_end]] : [];
+  }
+  return markSpans(h.raw_text, spans);
+}
+
+// 把「你的问题」按落点强弱画出来：逐字命中 / 仅 2 字级 / 无对应
+function coverBlock(g) {
+  var c = g.cover, t = g.text || '';
+  if (!c || !t || !c.strong || !c.weak) { return ''; }
+  if (!c.strong.length && !c.weak.length) { return ''; }
+  var lvl = [], i, k;
+  for (i = 0; i < t.length; i++) { lvl[i] = 0; }
+  c.strong.forEach(function (s) { for (k = s[0]; k < s[1] && k < t.length; k++) { lvl[k] = 2; } });
+  c.weak.forEach(function (s) {
+    for (k = s[0]; k < s[1] && k < t.length; k++) { if (!lvl[k]) { lvl[k] = 1; } }
+  });
+  var out = [], nStrong = 0, nWeak = 0;
+  i = 0;
+  while (i < t.length) {
+    var v = lvl[i], j = i;
+    while (j < t.length && lvl[j] === v) { j++; }
+    var seg = esc(t.slice(i, j));
+    // 标点不参与「有没有落点」的判断，别把「、」画成灰色
+    var blank = !/[0-9A-Za-z\u4e00-\u9fff]/.test(t.slice(i, j));
+    if (v === 2) { out.push('<mark>' + seg + '</mark>'); nStrong += j - i; }
+    else if (v === 1) { out.push('<u class="weak">' + seg + '</u>'); nWeak += j - i; }
+    else if (blank) { out.push(seg); }
+    else { out.push('<span class="miss">' + seg + '</span>'); }
+    i = j;
+  }
+  var pct = function (n) { return Math.round(n / Math.max(1, t.length) * 100); };
+  return '<div class="attn">' +
+    '<div class="attn-head">你这段问题在下面这些公司里的落点：' +
+      '逐字命中 ' + pct(nStrong) + '% ｜ 仅 2 字级 ' + pct(nWeak) + '% ｜ ' +
+      '无对应 ' + pct(t.length - nStrong - nWeak) + '%</div>' +
+    '<div class="attn-text">' + out.join('') + '</div>' +
+    '<div class="attn-tip"><i>绿底</i> = 逐字相同，4-gram 打分吃得到；' +
+      '<i>虚线下划线</i> = 只有 2 字级对得上（对方换了措辞，4-gram 对不上，所以分数会偏低）；' +
+      '<i>灰色</i> = 返回的这几条里没有对应说法。</div>' +
+    '</div>';
+}
+
+// 阈值是量出来的，不是拍的（probe/score_calib.py，120 条跨公司样本，跳过同公司）：
+// 有同题可抄的那一组中位分 0.38、p25 0.17；库里没有的那一组中位 0.12、p75 0.14。
+// 取 0.18 作分界时：好匹配召回 73%，误报 8%（取 0.20 召回降到 69%）。
+var T_HIGH = 0.40, T_MID = 0.18;
+
+function level(score) {
+  if (score >= T_HIGH) { return 'high'; }
+  if (score >= T_MID) { return 'mid'; }
+  return 'low';
+}
+var COLORS = { high: 'var(--ok)', mid: 'var(--mid)', low: 'var(--low)' };
+
+function num(n) {
+  return String(n === null || n === undefined ? 0 : n)
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// —— 左侧栏宽度：可拖动，记在 localStorage 里，双击 / 方向键复位 ——
+(function () {
+  var MIN = 220, MAX = 560, DEF = 300;
+  var root = document.documentElement, sp = $('splitter'), aside = document.querySelector('aside');
+  var saved = null;
+  try { saved = parseInt(localStorage.getItem('asideW'), 10); } catch (e) {}
+  if (saved >= MIN && saved <= MAX) { root.style.setProperty('--aside-w', saved + 'px'); }
+  function setW(v) {
+    v = Math.max(MIN, Math.min(MAX, Math.round(v)));
+    root.style.setProperty('--aside-w', v + 'px');
+    try { localStorage.setItem('asideW', String(v)); } catch (e) {}
+  }
+  var drag = null;
+  sp.addEventListener('pointerdown', function (e) {
+    drag = { x: e.clientX, w: aside.getBoundingClientRect().width };
+    sp.setPointerCapture(e.pointerId);
+    sp.classList.add('dragging');
+    document.body.classList.add('resizing');
+    e.preventDefault();
+  });
+  sp.addEventListener('pointermove', function (e) {
+    if (drag) { setW(drag.w + (e.clientX - drag.x)); }
+  });
+  function end(e) {
+    if (!drag) { return; }
+    drag = null;
+    sp.classList.remove('dragging');
+    document.body.classList.remove('resizing');
+    try { sp.releasePointerCapture(e.pointerId); } catch (err) {}
+  }
+  sp.addEventListener('pointerup', end);
+  sp.addEventListener('pointercancel', end);
+  sp.addEventListener('dblclick', function () {
+    root.style.setProperty('--aside-w', DEF + 'px');
+    try { localStorage.removeItem('asideW'); } catch (e) {}
+  });
+  sp.addEventListener('keydown', function (e) {
+    var cur = aside.getBoundingClientRect().width;
+    if (e.key === 'ArrowLeft') { setW(cur - 20); e.preventDefault(); }
+    else if (e.key === 'ArrowRight') { setW(cur + 20); e.preventDefault(); }
+  });
+})();
+
+function loadStats() {
+  fetch('/api/stats').then(function (r) { return r.json(); }).then(function (s) {
+    state.stats = s;
+    $('stats').innerHTML =
+      '<div>问询函 <b>' + num(s.letters) + '</b></div>' +
+      '<div>公司 <b>' + num(s.company_count) + '</b></div>' +
+      '<div>最小 query <b>' + num(s.queries) + '</b></div>';
+    var rows = [
+      ['板块', s.boards.join(' / ')],
+      ['问询函', num(s.letters) + ' 份'],
+      ['公司', num(s.company_count) + ' 家']
+    ];
+    // 分板块明细（北交所 / 新三板），两个板块的库是分开检索的
+    (s.by_board || []).forEach(function (b) {
+      rows.push([b.board, num(b.letters) + ' 份 · ' + num(b.companies) + ' 家 · ' +
+                 num(b.queries) + ' 条']);
+    });
+    rows = rows.concat([
+      ['轮次', (s.letters_by_round || []).map(function (r) {
+        return '第 ' + r[0] + ' 轮 ' + num(r[1]) + ' 份';
+      }).join('，')],
+      ['问题节', num(s.questions) + ' 个'],
+      ['最小 query', num(s.queries) + ' 条'],
+      ['章节', num(s.chapters.length) + ' 类'],
+      ['原文页数', num(s.pages) + ' 页'],
+      ['IDF 词表', num(s.grams) + ' 个 ' + (s.gram_n === undefined ? 2 : s.gram_n) + '-gram']
+    ]);
+    $('libinfo').innerHTML = rows.map(function (r) {
+      return '<div><dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd></div>';
+    }).join('');
+    var ch = ['<option value="">（全部章节）</option>'];
+    s.chapters.forEach(function (c) { ch.push('<option value="' + esc(c) + '">' + esc(c) + '</option>'); });
+    $('chapter').innerHTML = ch.join('');
+    var rd = ['<option value="">（全部轮次）</option>'];
+    s.rounds.forEach(function (n) { rd.push('<option value="' + n + '">第 ' + n + ' 轮</option>'); });
+    $('round').innerHTML = rd.join('');
+    var bd = [];
+    ['北交所', '科创板', '创业板', '主板', '新三板'].forEach(function (b) {
+      var ok = s.boards.indexOf(b) >= 0;
+      bd.push('<button data-b="' + b + '"' + (ok ? '' : ' disabled') +
+              (b === state.board ? ' class="on"' : '') + '>' + b + '</button>');
+    });
+    $('boards').innerHTML = bd.join('');
+    Array.prototype.forEach.call($('boards').children, function (btn) {
+      btn.onclick = function () {
+        if (btn.disabled) { return; }
+        state.board = btn.dataset.b;
+        Array.prototype.forEach.call($('boards').children, function (o) { o.classList.remove('on'); });
+        btn.classList.add('on');
+      };
+    });
+    var cw = $('chips');
+    cw.innerHTML = '<span class="chips-label">试试：</span>';
+    [
+      '说明研发人员认定标准及划分依据，研发人员是否全职从事研发活动并作出实际贡献',
+      '说明客户相应第三方回款金额与合同金额、销售收入、应收账款的勾稽匹配关系，是否具备可验证性',
+      '说明报告期各期末存货跌价准备的计提方法、计提依据及充分性'
+    ].forEach(function (t) {
+      var b = document.createElement('button');
+      b.textContent = t.slice(0, 26) + '…';
+      b.title = t;
+      b.onclick = function () { $('q').value = t; doSearch(); };
+      cw.appendChild(b);
+    });
+  });
+}
+
+function doSearch() {
+  var q = $('q').value.trim();
+  if (!q) { $('q').focus(); return; }
+  var btn = $('go');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>检索中';
+  $('results').innerHTML = '<div class="empty">正在检索…</div>';
+  var payload = {
+    q: q,
+    board: $('expand').checked ? null : state.board,
+    chapter: $('expand').checked ? null : ($('chapter').value || null),
+    round: $('round').value ? parseInt($('round').value, 10) : null,
+    top: parseInt($('top').value, 10),
+    expand: $('expand').checked,
+    boilerplate: $('boiler').checked
+  };
+  fetch('/api/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then(function (r) {
+    if (!r.ok) { return r.json().then(function (e) { throw new Error(e.detail || '检索失败'); }); }
+    return r.json();
+  }).then(function (data) {
+    render(data);
+  }).catch(function (e) {
+    $('results').innerHTML = '<div class="banner warn">出错了：' + esc(e.message) + '</div>';
+  }).then(function () {
+    btn.disabled = false;
+    btn.textContent = '搜索';
+  });
+}
+
+function render(data) {
+  var out = [];
+  var groups = data.groups || [];
+  var best = 0;
+  groups.forEach(function (g) {
+    (g.hits || []).forEach(function (h) { if (h.score > best) { best = h.score; } });
+  });
+
+  if (data.parts && data.parts.length > 1) {
+    out.push('<div class="banner split">已把输入拆成 ' + data.parts.length + ' 个最小 query，分别检索后汇总</div>');
+    out.push('<ul class="parts">' + data.parts.map(function (p, i) {
+      return '<li><em>' + (i + 1) + '</em><span>' + esc(p) + '</span></li>';
+    }).join('') + '</ul>');
+  }
+  if (best > 0 && best < T_MID) {
+    out.push('<div class="banner warn">库里没有特别接近的问题，下面是最接近的几条 —— ' +
+             '建议勾选「扩大搜索范围」，或换一种问法。</div>');
+  }
+
+  groups.forEach(function (g, gi) {
+    out.push('<div class="group">');
+    out.push('<div class="group-head"><em>' + (gi + 1) + '</em><p>' + esc(g.text) + '</p></div>');
+    out.push(coverBlock(g));
+    if (!g.hits || !g.hits.length) {
+      out.push('<div class="empty">没有找到相似的问题，试试勾选「扩大搜索范围」。</div>');
+    }
+    (g.hits || []).forEach(function (h, hi) { out.push(card(h, hi + 1)); });
+    out.push('</div>');
+  });
+  $('results').innerHTML = out.join('');
+}
+
+function card(h, rank) {
+  var lv = level(h.score);
+  var pct = Math.max(4, Math.min(100, Math.round(h.score / 0.75 * 100)));
+  var tags = ['<span class="tag plain">' + esc(h.board) + '</span>',
+              '<span class="tag plain">第 ' + h.round + ' 轮</span>',
+              '<span class="tag">' + esc(h.chapter_std || '—') + '</span>'];
+  if (h.exact) { tags.push('<span class="tag">逐字命中</span>'); }
+  if (h.is_boilerplate) { tags.push('<span class="tag plain">套话</span>'); }
+  var meta = [];
+  if (h.sub_question) { meta.push('小问：' + esc(h.sub_question)); }
+  if (h.asker) { meta.push('提问主体：' + esc(h.asker)); }
+  meta.push('原文 ' + esc(h.pages) + ' 页');
+  return '<article class="card ' + lv + '">' +
+    '<div class="card-top">' +
+      '<span class="rank">' + rank + '</span>' +
+      '<span class="who">' + esc(h.company) + '</span>' + tags.join('') +
+      '<span class="score"><span class="bar"><i style="width:' + pct + '%;background:' +
+        COLORS[lv] + '"></i></span><b style="color:' + COLORS[lv] + '">' +
+        h.score.toFixed(3) + '</b></span>' +
+    '</div>' +
+    '<div class="qtitle">' + esc(h.question || '') + '</div>' +
+    '<div class="meta">' + meta.join(' ｜ ') + '</div>' +
+    '<blockquote>' + mark(h) + '</blockquote>' +
+    '<div class="card-foot"><code>' + esc(h.q_id) + '</code>' +
+      '<button class="ghost" data-qid="' + esc(h.question_id) + '">展开该问题节的完整小问</button>' +
+    '</div>' +
+    '<div class="siblings" hidden></div>' +
+  '</article>';
+}
+
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest ? e.target.closest('.ghost') : null;
+  if (!btn) { return; }
+  var box = btn.closest('.card').querySelector('.siblings');
+  if (!box.hidden) { box.hidden = true; btn.textContent = '展开该问题节的完整小问'; return; }
+  btn.textContent = '加载中…';
+  fetch('/api/siblings?question_id=' + encodeURIComponent(btn.dataset.qid))
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      box.innerHTML = d.items.length
+        ? d.items.map(function (s) {
+            return '<div><b>#' + s.seq_in_question + ' ' + esc(s.asker || '') + '</b>' +
+                   esc(s.raw_text) + '</div>';
+          }).join('')
+        : '<div class="empty">没有其他小问</div>';
+      box.hidden = false;
+      btn.textContent = '收起';
+    })
+    .catch(function () { btn.textContent = '展开该问题节的完整小问'; });
+});
+
+document.addEventListener('keydown', function (e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doSearch(); }
+});
+
+$('go').onclick = doSearch;
+['chapter', 'round', 'top', 'expand', 'boiler'].forEach(function (id) {
+  $(id).addEventListener('change', function () {
+    if ($('q').value.trim() && $('results').innerHTML) { doSearch(); }
+  });
+});
+loadStats();
+</script>
+</body>
+</html>

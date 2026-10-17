@@ -1,0 +1,4 @@
+pdfplumber>=0.11
+fastapi>=0.110
+uvicorn>=0.27
+requests>=2.31

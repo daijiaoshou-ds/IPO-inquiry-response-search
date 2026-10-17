@@ -1,0 +1,8 @@
+# Web 服务端只需要这两样。
+#
+# 注意这里【没有】pdfplumber：src/extract.py 里读 PDF 的那句已经改成函数内延迟
+# 导入（见 extract.iter_lines），所以单纯跑 Web 服务不会碰到 PDF 解析栈。
+# 如果哪天往 import 链顶端又塞了 pdfread，这个镜像会立刻报 ModuleNotFoundError——
+# 那是有意的：宁可镜像是坏的，也不要悄悄多装 50 MB。
+fastapi>=0.110
+uvicorn>=0.27
