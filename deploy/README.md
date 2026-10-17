@@ -54,7 +54,7 @@ pdfplumber（一整条 PDF 解析栈，几十 MB）。但 Web 服务只用得上
 
 - `deploy/requirements.txt` 只有 `fastapi` + `uvicorn`；
 - 镜像小、构建快，少一类装不上的依赖；
-- 抽取能力没变——改完当场拿 `问询函_创业板/博实结科技_r1.pdf` 验证过（8 页 / 2 题 / 2 条 query）。
+- 抽取能力没变——改完当场拿 `问询函/创业板/博实结科技_r1.pdf` 验证过（8 页 / 2 题 / 2 条 query）。
 
 要单独用 `is_hei` / `page_count`，直接从 `src.pdfread` 取。
 

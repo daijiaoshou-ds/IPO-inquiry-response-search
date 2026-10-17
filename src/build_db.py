@@ -184,14 +184,15 @@ def quick_hash(path: str) -> str:
 
 # 默认扫描范围：目录 -> 板块。目录不存在就跳过，所以少一个板块也能跑。
 # 创业板的 PDF 是【回复】，问题原文要从里面的提问段抄回来（见 src/extract.REPLY_SOURCED）。
-DEFAULT_SOURCES = (("问询函", "北交所"), ("问询函_新三板", "新三板"),
-                   ("问询函_创业板", "创业板"))
+# 目录结构：问询函/<板块名>/*.pdf —— 一个板块一个子目录。
+DEFAULT_SOURCES = (("问询函/北交所", "北交所"), ("问询函/新三板", "新三板"),
+                   ("问询函/创业板", "创业板"))
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", action="append", default=[],
-                    help="目录=板块，可重复；不给就扫 问询函(北交所) 和 问询函_新三板(新三板)")
+                    help="目录=板块，可重复；不给就扫 问询函/ 下已有的板块子目录")
     ap.add_argument("--db", default="data/queries.db")
     ap.add_argument("--rebuild", action="store_true", help="清库重建")
     ap.add_argument("--jobs", type=int, default=1, help="解析 PDF 的并行进程数（大库建议 4~8）")
@@ -222,7 +223,7 @@ def main() -> None:
     if not pairs:
         pairs = [(d, b) for d, b in DEFAULT_SOURCES if Path(d).is_dir()]
     if not pairs:
-        raise SystemExit("找不到任何问询函目录（问询函/ 或 问询函_新三板/）")
+        raise SystemExit("找不到任何问询函目录（应为 问询函/<板块名>/，例如 问询函/北交所/）")
 
     jobs: list[tuple[str, str]] = []
     for d, b in pairs:
