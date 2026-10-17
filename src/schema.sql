@@ -6,7 +6,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS letter (
   letter_id   TEXT PRIMARY KEY,          -- 如 皇裕精密-r1
   company     TEXT NOT NULL,
-  board       TEXT NOT NULL,             -- 北交所/科创板/创业板/主板/新三板
+  board       TEXT NOT NULL,             -- 北交所/科创板/创业板/深主板/新三板
   round       INTEGER NOT NULL,          -- 1/2/3
   source_url  TEXT,                      -- 交易所官网原文链接
   file_path   TEXT,

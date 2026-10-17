@@ -517,7 +517,7 @@ function loadStats() {
     s.rounds.forEach(function (n) { rd.push('<option value="' + n + '">第 ' + n + ' 轮</option>'); });
     $('round').innerHTML = rd.join('');
     var bd = [];
-    ['北交所', '科创板', '创业板', '主板', '新三板'].forEach(function (b) {
+    ['北交所', '科创板', '创业板', '深主板', '新三板'].forEach(function (b) {
       var ok = s.boards.indexOf(b) >= 0;
       bd.push('<button data-b="' + b + '"' + (ok ? '' : ' disabled') +
               (b === state.board ? ' class="on"' : '') + '>' + b + '</button>');

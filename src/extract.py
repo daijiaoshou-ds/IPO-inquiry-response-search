@@ -49,7 +49,7 @@ def iter_lines(*args, **kwargs):
 # 后面完全复用同一套抽取规则。
 #
 # （字体过滤的能力保留在 pdfread.want_font 里，作为备用手段，默认不启用。）
-REPLY_SOURCED = {"创业板"}
+REPLY_SOURCED = {"创业板", "深主板"}
 # 回复正文的起点标记。各家写法不同，实测见过：
 #     "回复："          （埃索凯、初源新材）
 #     "回复说明："       （迪嘉药业）—— 原来只写「回复[:：]」会漏掉这个，
@@ -334,11 +334,17 @@ def scan_letter(pdf_path: str, company: str | None = None, board: str = "北交�
                 hits[l.text] = hits.get(l.text, 0) + 1
         running_headers = {t for t, n in hits.items() if n >= 3 and len(t) >= 10}
 
-    use_ask_start = (
-        board in REPLY_SOURCED
-        and sum(1 for l in lines
-                if QUESTION_RE.match(l.text) or QUESTION_CN_RE.match(l.text)
-                or NSP_QUESTION_RE.match(l.text)) < 2)
+    # 这份文档到底有没有"问题N"标题？没有就退化成用行首裸「请发行人」切问题。
+    head_hits = sum(1 for l in lines
+                    if QUESTION_RE.match(l.text) or QUESTION_CN_RE.match(l.text)
+                    or NSP_QUESTION_RE.match(l.text))
+    ask_hits = sum(1 for l in lines if ASK_START_RE.match(l.text))
+    # 光看"标题少于 2 个"不够：深主板-东实汽车科技 r1（535 页）正文里恰好有两条
+    # 「1、关于质物」这样的回复小标题被 NSP_QUESTION_RE 认成问题标题，于是被判成
+    # "这文档有标题"，16 道以裸「请发行人：」开头的问题一条都没切出来，整份 0 条。
+    # 加一道比例闸：裸「请发行人」开头的行明显多于标题行时，就是"没标题"。
+    use_ask_start = board in REPLY_SOURCED and (
+        head_hits < 2 or (ask_hits >= 5 and ask_hits > 3 * head_hits))
     synth_no = 0
 
     for line in lines:
@@ -369,8 +375,8 @@ def scan_letter(pdf_path: str, company: str | None = None, board: str = "北交�
                 num = cn_int(m_cn.group(1))
                 if num is not None:
                     no, title = num, line.text.strip()
-        if no is None and board in ("新三板", "创业板"):
-            # 创业板回抄的问询函问题标题有三种写法，实测都出现过：
+        if no is None and (board in REPLY_SOURCED or board == "新三板"):
+            # 回复回抄的问询函问题标题有三种写法，实测都出现过：
             #     问题1关于创业板定位 / 问题1.关于技术创新性和市场空间 / 1.关于行业发展和发行人业绩波动
             m2 = NSP_QUESTION_RE.match(line.text)
             if m2:
