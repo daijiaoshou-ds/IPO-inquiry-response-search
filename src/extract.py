@@ -358,6 +358,18 @@ def scan_letter(pdf_path: str, company: str | None = None, board: str = "北交�
         m_ch = CHAPTER_RE.match(line.text)
         if (m_ch
                 and len(line.text) <= 24 and not CHAPTER_BAD_RE.search(line.text)):
+            if cur_q is not None and not cur_q["body"]:
+                # 「问题一及回复」紧接着「一、关于关联方」——这行是这一问自己的开头，
+                # 不是章节边界。当成章节的话，cur_q 会被 close_q 当"空题"丢掉，
+                # 而后面整段正文因为 cur_q is None 无人接收，整份文件 0 条。
+                # 实测 百胜智能科技 r1（331 页 / 30 问）：30 道题一条都没切出来。
+                # 这个分支现在只会把"标题后紧跟章节行"的文件救回来；不走这条分支的
+                # 文件行为完全不变（其它文件里章节行前面都是有正文的）。
+                cur_q["body"].append(line.text)
+                if not cur_q.get("has_asker") and ASKER_RE.search(line.text):
+                    cur_q["has_asker"] = True
+                cur_q["page_end"] = line.page
+                continue
             close_q(cur_q)
             cur_q = None
             chapter = line.text.strip()
