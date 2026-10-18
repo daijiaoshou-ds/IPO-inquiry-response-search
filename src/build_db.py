@@ -213,7 +213,16 @@ def main() -> None:
             rows = json.loads(man.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             rows = []
-        missing = [r for r in rows if r.get("file") and not Path(r["file"]).exists()]
+        # 有意删掉的（扫描件等）记在 data/pruned_pdfs.txt 里，不算"缺文件"
+        pruned_path = Path(__file__).resolve().parent.parent / "data" / "pruned_pdfs.txt"
+        pruned: set[str] = set()
+        if pruned_path.exists():
+            pruned = {ln.split("#")[0].strip().replace("\\", "/")
+                      for ln in pruned_path.read_text(encoding="utf-8").splitlines()
+                      if ln.split("#")[0].strip()}
+        missing = [r for r in rows
+                   if r.get("file") and not Path(r["file"]).exists()
+                   and str(r["file"]).replace("\\", "/") not in pruned]
         if missing:
             raise SystemExit(
                 "拒绝 --rebuild：清单里有 %d 份 PDF 已经不在磁盘上（例如 %s）。\n"
