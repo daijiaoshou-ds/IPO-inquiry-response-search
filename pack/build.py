@@ -3,7 +3,7 @@
 
     .venv\\Scripts\\python.exe pack\\build.py
 
-产物：pack\\_out\\问询检索_v1.0_2026-10.zip   （约 68 MB）
+产物：pack\\_out\\问询检索_v<版本>_<年月>.zip   （当前约 95 MB）
 
 思路：
   * 数据库里【不带】FTS 触发索引和 4 个二级索引，读者第一次运行时自建（实测 6~10 秒），
@@ -26,7 +26,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "1.1"
+VERSION = "1.2"
 RELEASE = time.strftime("%Y-%m")      # 数据截止月份，也是发布日期
 AUTHOR = "呆叫兽"
 NAME = "问询检索"

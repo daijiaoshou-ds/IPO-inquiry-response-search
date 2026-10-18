@@ -332,8 +332,12 @@ def search_one(conn: sqlite3.Connection, question: str, *, board=None, chapter=N
         where.append("round = ?")
         params.append(round_no)
     if chapter and not expand:
-        # 第二轮及以后的问询函不按章节组织（实测 r2/r3 全部无章节），
-        # 所以章节过滤必须放行 chapter_std IS NULL，否则会静默漏掉六成以上的库。
+        # 章节只对"问询函体裁"的板块（北交所/新三板）可信。创业板/深主板是回复体裁，
+        # 每道题答案内部的"一、核查程序 / 二、核查意见"会被规则 1 当成章节
+        # （实测创业板 2676 个取值、深主板 207 个，全是这类小标题），
+        # 既不能跨公司对齐，也不能当过滤条件——前端已下线章节筛选，参数留给命令行。
+        # 另外 2814 份、77262 条 query（37%）根本无章节（r2 及以后 + 新三板），
+        # 所以过滤必须放行 chapter_std IS NULL，否则会静默漏掉三成七的库。
         where.append("(chapter_std = ? OR chapter = ? OR chapter_std IS NULL)")
         params.extend([chapter, chapter])
     if not include_boilerplate:
@@ -605,9 +609,6 @@ def stats(conn: sqlite3.Connection) -> dict:
         ],
         "boards": [r[0] for r in conn.execute(
             "SELECT DISTINCT board FROM query ORDER BY board")],
-        "chapters": [r[0] for r in conn.execute(
-            "SELECT chapter_std, COUNT(*) c FROM query WHERE chapter_std IS NOT NULL "
-            "GROUP BY chapter_std ORDER BY c DESC")],
         "rounds": [r[0] for r in conn.execute("SELECT DISTINCT round FROM query ORDER BY round")],
     }
 

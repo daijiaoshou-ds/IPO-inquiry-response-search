@@ -293,11 +293,6 @@
       <div class="sec-title">检索范围</div>
       <div class="board-tabs" id="boards"></div>
       <label class="field" style="margin-top:14px">
-        <span>章节</span>
-        <select id="chapter"></select>
-        <i>第二轮及以后的问询函不按章节组织，不受此过滤影响。</i>
-      </label>
-      <label class="field">
         <span>轮次</span>
         <select id="round"></select>
       </label>
@@ -311,7 +306,7 @@
         </select>
       </label>
       <label class="check"><input type="checkbox" id="expand">
-        <span>扩大搜索范围<i>跨章节搜索。同一条问题在不同公司可能被放进不同章节，硬过滤会漏。</i></span>
+        <span>扩大搜索范围<i>跨板块搜索。同一条问题在别的板块也可能被问过，硬过滤会漏。</i></span>
       </label>
       <label class="check"><input type="checkbox" id="boiler">
         <span>显示套话<i>如「核查上述事项并发表明确意见」，这类问题跨公司会 100% 命中，默认隐藏。</i></span>
@@ -503,16 +498,12 @@ function loadStats() {
       }).join('，')],
       ['问题节', num(s.questions) + ' 个'],
       ['最小 query', num(s.queries) + ' 条'],
-      ['章节', num(s.chapters.length) + ' 类'],
       ['原文页数', num(s.pages) + ' 页'],
       ['IDF 词表', num(s.grams) + ' 个 ' + (s.gram_n === undefined ? 2 : s.gram_n) + '-gram']
     ]);
     $('libinfo').innerHTML = rows.map(function (r) {
       return '<div><dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd></div>';
     }).join('');
-    var ch = ['<option value="">（全部章节）</option>'];
-    s.chapters.forEach(function (c) { ch.push('<option value="' + esc(c) + '">' + esc(c) + '</option>'); });
-    $('chapter').innerHTML = ch.join('');
     var rd = ['<option value="">（全部轮次）</option>'];
     s.rounds.forEach(function (n) { rd.push('<option value="' + n + '">第 ' + n + ' 轮</option>'); });
     $('round').innerHTML = rd.join('');
@@ -557,7 +548,6 @@ function doSearch() {
   var payload = {
     q: q,
     board: $('expand').checked ? null : state.board,
-    chapter: $('expand').checked ? null : ($('chapter').value || null),
     round: $('round').value ? parseInt($('round').value, 10) : null,
     top: parseInt($('top').value, 10),
     expand: $('expand').checked,
@@ -616,8 +606,13 @@ function card(h, rank) {
   var lv = level(h.score);
   var pct = Math.max(4, Math.min(100, Math.round(h.score / 0.75 * 100)));
   var tags = ['<span class="tag plain">' + esc(h.board) + '</span>',
-              '<span class="tag plain">第 ' + h.round + ' 轮</span>',
-              '<span class="tag">' + esc(h.chapter_std || '—') + '</span>'];
+              '<span class="tag plain">第 ' + h.round + ' 轮</span>'];
+  // 章节标签只对"问询函体裁"的板块有意义。创业板/深主板是回复体裁，
+  // 抽出来的"章节"其实是每道题答案里的小标题（核查意见/请保荐人发表明确意见），
+  // 标在卡片上只会误导，干脆不显示。
+  if (['北交所', '新三板', '科创板'].indexOf(h.board) >= 0 && h.chapter_std) {
+    tags.push('<span class="tag">' + esc(h.chapter_std) + '</span>');
+  }
   if (h.exact) { tags.push('<span class="tag">逐字命中</span>'); }
   if (h.is_boilerplate) { tags.push('<span class="tag plain">套话</span>'); }
   var meta = [];
@@ -668,7 +663,7 @@ document.addEventListener('keydown', function (e) {
 });
 
 $('go').onclick = doSearch;
-['chapter', 'round', 'top', 'expand', 'boiler'].forEach(function (id) {
+['round', 'top', 'expand', 'boiler'].forEach(function (id) {
   $(id).addEventListener('change', function () {
     if ($('q').value.trim() && $('results').innerHTML) { doSearch(); }
   });

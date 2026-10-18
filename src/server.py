@@ -60,6 +60,7 @@ def connect() -> sqlite3.Connection:
 class SearchIn(BaseModel):
     q: str
     board: str | None = None
+    # 章节筛选：前端已下线（回复体裁板块抽出来的章节是噪声），字段留着给接口/命令行用
     chapter: str | None = None
     round: int | None = None
     top: int = 5
