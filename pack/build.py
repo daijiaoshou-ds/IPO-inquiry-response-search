@@ -6,7 +6,7 @@
 产物：pack\\_out\\问询检索_v1.0_2026-10.zip   （约 68 MB）
 
 思路：
-  * 数据库里【不带】FTS 触发索引和 4 个二级索引，读者第一次运行时自建（实测 5.8 秒），
+  * 数据库里【不带】FTS 触发索引和 4 个二级索引，读者第一次运行时自建（实测 6~10 秒），
     光这一步就把下载量从 112 MB 压到 50 MB；
   * 运行时用 python.org 的 embeddable 包（python.exe 有 PSF 签名），
     不用 PyInstaller，避开 SmartScreen 和杀软误报；
@@ -26,7 +26,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "1.0"
+VERSION = "1.1"
 RELEASE = time.strftime("%Y-%m")      # 数据截止月份，也是发布日期
 AUTHOR = "呆叫兽"
 NAME = "问询检索"

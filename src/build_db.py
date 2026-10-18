@@ -195,11 +195,33 @@ def main() -> None:
                     help="目录=板块，可重复；不给就扫 问询函/ 下已有的板块子目录")
     ap.add_argument("--db", default="data/queries.db")
     ap.add_argument("--rebuild", action="store_true", help="清库重建")
+    ap.add_argument("--allow-missing", action="store_true",
+                    help="配合 --rebuild：清单里有 PDF 已从磁盘删掉时，允许照样从空库重建"
+                         "（那些函的内容会永久丢失，除非重新下载）")
     ap.add_argument("--jobs", type=int, default=1, help="解析 PDF 的并行进程数（大库建议 4~8）")
     ap.add_argument("--force-board", action="append", default=[], metavar="板块",
                     help="强制重新解析指定板块。改过抽取规则（src/extract.py）但 PDF 没变时用，"
                          "只重抽这一个板块，其余板块照常走 hash 跳过")
     args = ap.parse_args()
+
+    # --rebuild 是从空库重来：磁盘上已经没有的 PDF，其 letter/question/query 会永久消失。
+    # 增量建库不会删行，所以"删 PDF 释放空间"只有在误跑 --rebuild 时才致命。
+    # 2026-10 起默认拒绝，逼人显式确认。
+    if args.rebuild and not args.allow_missing:
+        man = Path(__file__).resolve().parent.parent / "data" / "letters_manifest.json"
+        try:
+            rows = json.loads(man.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            rows = []
+        missing = [r for r in rows if r.get("file") and not Path(r["file"]).exists()]
+        if missing:
+            raise SystemExit(
+                "拒绝 --rebuild：清单里有 %d 份 PDF 已经不在磁盘上（例如 %s）。\n"
+                "--rebuild 从空库重来，这些函的内容会永久丢掉（增量建库不受影响，"
+                "缺失的函会原样留在库里）。\n"
+                "要重下：python -m src.fetch_szse --board <板块> --from-list <候选清单>\n"
+                "确实要从空库重建：加 --allow-missing。"
+                % (len(missing), missing[0]["file"]))
 
     db_path = Path(args.db)
     # 一律建到临时文件，全部成功后再原子换名。
