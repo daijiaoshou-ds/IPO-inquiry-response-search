@@ -219,7 +219,7 @@ def main() -> None:
                 "拒绝 --rebuild：清单里有 %d 份 PDF 已经不在磁盘上（例如 %s）。\n"
                 "--rebuild 从空库重来，这些函的内容会永久丢掉（增量建库不受影响，"
                 "缺失的函会原样留在库里）。\n"
-                "要重下：python -m src.fetch_szse --board <板块> --from-list <候选清单>\n"
+                "要重下：用本地下载脚本按清单重新拉一遍（脚本不在公开仓库里）\n"
                 "确实要从空库重建：加 --allow-missing。"
                 % (len(missing), missing[0]["file"]))
 
