@@ -26,7 +26,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "1.3"
+VERSION = "1.4"
 RELEASE = time.strftime("%Y-%m")      # 数据截止月份，也是发布日期
 AUTHOR = "呆叫兽"
 NAME = "问询检索"
@@ -40,7 +40,8 @@ CACHE = ROOT / "pack" / "_cache"
 SRC_DB = ROOT / "data" / "queries.db"
 
 # 服务端真正用到的文件；pdfread / build_db 这些不进包
-APP_FILES = ["__init__.py", "server.py", "search.py", "extract.py", "normalize.py"]
+APP_FILES = ["__init__.py", "server.py", "search.py", "extract.py", "normalize.py",
+             "engine_rust.py"]
 DROP_INDEXES = ["idx_q_align", "idx_q_src", "idx_q_norm", "idx_q_letter"]
 
 
@@ -174,7 +175,16 @@ def main() -> None:
     page.write_text(html, encoding="utf-8")
 
     shutil.copy2(ROOT / "pack" / "run_offline.py", appdir / "run.py")
-    print("   src/ + webui + run.py")
+
+    # Rust 检索内核：静态链接的 exe（约 2.4 MB），缺了也能跑——会自动回退 Python 引擎
+    rust_exe = ROOT / "rust" / "search-core" / "target" / "release" / "search-core.exe"
+    if rust_exe.exists():
+        shutil.copy2(rust_exe, pkg / "search-core.exe")
+        print("   src/ + webui + run.py + search-core.exe（%s）" % human(rust_exe.stat().st_size))
+    else:
+        print("   src/ + webui + run.py")
+        print("   !! 没找到 search-core.exe，先跑：cd rust\\search-core && cargo build --release")
+        print("   !! 这一版将只带 Python 引擎（可用，但每次检索 0.5 秒而不是 0.04 秒）")
 
     # ---- 4. 数据库 -----------------------------------------------------
     step("4/7 生成瘦身数据库（去掉 FTS 与二级索引）")

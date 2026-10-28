@@ -25,6 +25,31 @@ WEBUI = Path(__file__).with_name("webui")
 DEFAULT_DB = ROOT / "data" / "queries.db"
 
 app = FastAPI(title="问询回复检索", docs_url=None, redoc_url=None)
+
+
+@app.on_event("startup")
+def _warm_up() -> None:
+    """把慢的一次性开销挪到启动时，别让第一个用户吃 3 秒。
+
+    两件事：① Rust 内核常驻进程 + 索引 mmap；② Python 侧 IDF 表（307 万条 gram，
+    约 2.8 s，covered_spans 判断"弱证据"要用）。都放后台线程，不阻塞端口就绪。
+    """
+    import threading
+    from .search import load_idf
+
+    def work():
+        try:
+            from .engine_rust import get_engine
+            get_engine()
+        except Exception as e:
+            print("[engine] 预热 Rust 内核失败：" + str(e))
+        try:
+            load_idf(connect())
+        except Exception as e:
+            print("[engine] 预热 IDF 失败：" + str(e))
+
+    threading.Thread(target=work, name="warmup", daemon=True).start()
+
 DB_PATH = DEFAULT_DB
 AUTH = ""  # "用户名:密码" 则开启 Basic 认证；空串表示不校验（本机自己用）
 IDF_TABLE: dict[str, float] = {}

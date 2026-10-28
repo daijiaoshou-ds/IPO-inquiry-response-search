@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import socket
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -49,10 +50,38 @@ def writable_here() -> bool:
         return False
 
 
+def build_rust_index() -> None:
+    """建立 Rust 内核的倒排索引（约 15 秒，160 MB）。
+
+    没有 exe 或建失败都不用管：src/engine_rust.py 会自动回退 Python 引擎，
+    只是每次检索从 0.04 秒变成 0.5 秒，功能完全一样。
+    """
+    exe = ROOT / "search-core.exe"
+    idx = ROOT / "index" / "search.index"
+    if not exe.exists():
+        line("[3/5] 未附带快速检索引擎（Rust），使用 Python 引擎")
+        return
+    if idx.exists() and idx.stat().st_size > 1024 * 1024:
+        line("[3/5] 快速检索引擎索引已就绪，跳过")
+        return
+    line("[3/5] 正在建立快速检索索引（约 15 秒，只需一次，占 160 MB）...")
+    t0 = time.time()
+    try:
+        idx.parent.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run([str(exe), "--build-index", str(idx), "--db", str(DB)],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=900)
+        if r.returncode != 0 or not idx.exists():
+            raise RuntimeError(((r.stdout or "") + (r.stderr or "")).strip()[:300])
+        line("        完成，用时 %.0f 秒" % (time.time() - t0))
+    except Exception as e:
+        line("        建立失败（%.0f 秒），改用 Python 引擎：%s" % (time.time() - t0, str(e)))
+
+
 def build_index(conn: sqlite3.Connection) -> None:
     """自建 FTS5 触发索引 + 4 个二级索引（约 6 秒）。"""
     t0 = time.time()
-    line("[2/4] 第一次运行，正在建立检索索引（约 6 秒，只需一次）...")
+    line("[2/5] 第一次运行，正在建立检索索引（约 6 秒，只需一次）...")
     conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS query_fts USING fts5("
                  "q_id UNINDEXED, norm_loose, tokenize = 'trigram')")
     conn.execute("INSERT INTO query_fts(q_id, norm_loose) SELECT q_id, norm_loose FROM query")
@@ -100,20 +129,22 @@ def run() -> None:
         line("         请把整个文件夹解压到【桌面】或【D 盘】，不要放在 C:\\Program Files 下面。")
         return
 
-    line("[1/4] 数据文件 OK（%.0f MB）" % (DB.stat().st_size / 1048576))
+    line("[1/5] 数据文件 OK（%.0f MB）" % (DB.stat().st_size / 1048576))
 
     conn = sqlite3.connect(str(DB))
     try:
         if conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='query_fts'").fetchone()[0] == 0:
             build_index(conn)
         else:
-            line("[2/4] 索引已就绪，跳过")
+            line("[2/5] 索引已就绪，跳过")
     finally:
         conn.close()
 
+    build_rust_index()
+
     port = pick_port()
-    line("[3/4] 端口 %d 可用" % port)
-    line("[4/4] 启动服务，浏览器马上自动打开")
+    line("[4/5] 端口 %d 可用" % port)
+    line("[5/5] 启动服务，浏览器马上自动打开")
     line("       没有自动打开的话，手动访问：http://127.0.0.1:%d" % port)
     line()
     line("  ----------------------------------------------------------------")

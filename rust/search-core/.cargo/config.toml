@@ -1,0 +1,4 @@
+# 发布用的 exe 要能在读者机器上直接跑：静态链接 CRT，
+# 免得缺 VCRUNTIME140.dll 时双击报"无法启动此程序"。
+[build]
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -379,7 +379,8 @@ def search_one(conn: sqlite3.Connection, question: str, *, board=None, chapter=N
         scored.append([sim, exact, r])
 
     if defer_clauses:
-        for i in sorted(range(len(scored)), key=lambda i: -scored[i][0])[:clause_pool]:
+        for i in sorted(range(len(scored)),
+                        key=lambda i: (-scored[i][0], scored[i][2]["q_id"]))[:clause_pool]:
             r = scored[i][2]
             target = r["norm_core"] or r["norm_loose"]
             t_grams = ngrams(target)
@@ -389,7 +390,9 @@ def search_one(conn: sqlite3.Connection, question: str, *, board=None, chapter=N
             if best > scored[i][0]:
                 scored[i][0] = best
 
-    scored.sort(key=lambda x: (-x[0], -x[1]))
+    # 同分并列按 q_id 兜底：同公司 r1/r2 常逐字重复同一题，sim 严格相等，
+    # 不兜底的话谁在前取决于枚举顺序，"再搜一次"的结果会变。
+    scored.sort(key=lambda x: (-x[0], -x[1], x[2]["q_id"]))
     scored = scored[:max(40, min(TOP_FOR_LCS, LCS_CHAR_BUDGET // max(1, len(q_core) ** 2)))]
 
     out = []
@@ -415,7 +418,7 @@ def search_one(conn: sqlite3.Connection, question: str, *, board=None, chapter=N
             "raw_text": r["raw_text"], "char_len": r["char_len"],
             "is_boilerplate": bool(r["is_boilerplate"]),
         })
-    out.sort(key=lambda x: (-x["score"], -x["exact"]))
+    out.sort(key=lambda x: (-x["score"], -x["exact"], x["q_id"]))
 
     # 只给最终要展示的这几条算高亮片段，省时间
     for h in out[:top]:
@@ -548,10 +551,10 @@ def search(conn: sqlite3.Connection, text: str, **kw) -> list[dict]:  # noqa: D4
             old = merged.get(hit["q_id"])
             if old is None or hit["score"] > old["score"]:
                 merged[hit["q_id"]] = hit
-    return sorted(merged.values(), key=lambda x: -x["score"])[:kw.get("top", 10)]
+    return sorted(merged.values(), key=lambda x: (-x["score"], x["q_id"]))[:kw.get("top", 10)]
 
 
-def search_grouped(conn: sqlite3.Connection, text: str, **kw) -> dict:
+def _grouped_python(conn: sqlite3.Connection, text: str, **kw) -> dict:
     """按输入的每个最小 query 分组返回，方便看"我的第①问匹配到了什么"。"""
     parts = _useful_parts(text)
     idf = load_idf(conn)
@@ -570,8 +573,99 @@ def search_grouped(conn: sqlite3.Connection, text: str, **kw) -> dict:
         groups.append({"text": p, "hits": hits,
                        "cover": {"strong": strong, "weak": weak,
                                  "ratio": round(total / max(1, len(p)), 3)}})
-    flat = sorted(merged.values(), key=lambda x: -x["score"])[:kw.get("top", 10)]
+    flat = sorted(merged.values(), key=lambda x: (-x["score"], x["q_id"]))[:kw.get("top", 10)]
     return {"parts": parts, "groups": groups, "flat": flat}
+
+
+# ---------------------------------------------------------------- Rust 内核
+
+def _grouped_via_rust(conn: sqlite3.Connection, eng, text: str, **kw) -> dict:
+    """走 Rust 索引引擎。归一化仍在这里算，Rust 只负责检索与打分。"""
+    board = kw.get("board")
+    expand = kw.get("expand", False)
+    top = kw.get("top", 10)
+    round_no = kw.get("round_no")
+
+    parts = _useful_parts(text)
+    metas = [{
+        "text": p,
+        "core": norm_core(p), "loose": norm_loose(p),
+        "strict": norm_strict(p), "clauses": query_clauses(p),
+    } for p in parts]
+    hits_by_part = eng.search(metas, board=None if expand else board,
+                              round_no=round_no, top=top)
+
+    # 只把要展示的这几百行取回来（Rust 侧只给 q_id 和分数，不传正文）
+    want = [h["q_id"] for hs in hits_by_part for h in hs]
+    rows: dict = {}
+    for i in range(0, len(want), 800):
+        chunk = want[i:i + 800]
+        ph = ",".join("?" * len(chunk))
+        for r in conn.execute("SELECT * FROM query WHERE q_id IN (" + ph + ")", chunk):
+            rows[r["q_id"]] = r
+
+    idf = load_idf(conn)
+    groups, merged = [], {}
+    for p, hits in zip(parts, hits_by_part):
+        q_core = norm_core(p)
+        out = []
+        for h in hits:
+            r = rows.get(h["q_id"])
+            if r is None:
+                continue
+            core, idx = norm_core_map(r["raw_text"])
+            spans = _runs_to_spans(common_runs(q_core, core), idx, 1) if core else []
+            if spans:
+                hl_s, hl_e = max(spans, key=lambda s: s[1] - s[0])
+            else:
+                hl_s, hl_e = 0, 0
+            d = {
+                "score": h["score"], "sim": h["sim"], "lcs": h["lcs"],
+                "exact": h["exact"], "q_id": h["q_id"],
+                "question_id": r["question_id"], "company": r["company"],
+                "board": r["board"], "round": r["round"],
+                "chapter": r["chapter"], "chapter_std": r["chapter_std"],
+                "question_no": r["question_no"], "question": r["question"],
+                "sub_question": r["sub_question"], "asker": r["asker"],
+                "pages": str(r["page_start"]) + "-" + str(r["page_end"]),
+                "raw_text": r["raw_text"], "char_len": r["char_len"],
+                "is_boilerplate": bool(r["is_boilerplate"]),
+                "hl_spans": spans, "hl_start": hl_s, "hl_end": hl_e,
+                "from_input": p,
+            }
+            out.append(d)
+            old = merged.get(d["q_id"])
+            if old is None or d["score"] > old["score"]:
+                merged[d["q_id"]] = d
+        strong, weak = covered_spans(p, [x["raw_text"] for x in out], idf)
+        total = sum(e - s for s, e in strong) + sum(e - s for s, e in weak)
+        groups.append({"text": p, "hits": out,
+                       "cover": {"strong": strong, "weak": weak,
+                                 "ratio": round(total / max(1, len(p)), 3)}})
+    flat = sorted(merged.values(), key=lambda x: (-x["score"], x["q_id"]))[:top]
+    return {"parts": parts, "groups": groups, "flat": flat}
+
+
+def search_grouped(conn: sqlite3.Connection, text: str, **kw) -> dict:
+    """按输入的每个最小 query 分组返回。默认走 Rust 索引引擎，不可用时回退 Python。
+
+    开关（环境变量 QB_ENGINE）：
+        auto（默认）  能用 Rust 就用；启动失败或运行异常自动回退，无感
+        py           强制 Python（对照、排障用）
+    Rust 路径覆盖不了的过滤条件（章节 / 指定小问 / 放行套话）直接交回 Python，
+    避免"某几个参数被悄悄忽略"。
+    """
+    unsupported = (bool(kw.get("chapter")) or kw.get("question_no") is not None
+                   or kw.get("include_boilerplate"))
+    if not unsupported:
+        from .engine_rust import get_engine
+        eng = get_engine()
+        if eng is not None:
+            try:
+                return _grouped_via_rust(conn, eng, text, **kw)
+            except Exception as e:
+                print("[engine] Rust 检索失败，本次回退 Python：" + str(e))
+    return _grouped_python(conn, text, **kw)
 
 
 def siblings(conn: sqlite3.Connection, question_id: str) -> list[dict]:

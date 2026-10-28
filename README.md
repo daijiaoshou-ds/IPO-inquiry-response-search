@@ -62,6 +62,17 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m src.build_db --db data/queries.db --rebuild --jobs 6
 ```
 
+**想要更快的检索（可选）**：检索内核另有一版 Rust 实现，装了 Rust 工具链就能用：
+
+```bat
+cd rust\search-core
+cargo build --release
+target\release\search-core.exe --build-index ..\..\eval\search.index --db ..\..\data\queries.db
+```
+
+没装 Rust、没建索引都不影响使用——`src/engine_rust.py` 找不到内核会自动回退 Python，
+只是每次检索约 0.5 秒而不是 0.03 秒。想强制用回 Python：设环境变量 `QB_ENGINE=py`。
+
 `src/pdfread.py` 负责把 PDF 还原成带页码的行，`src/extract.py` 负责切出"最小问题"。
 支持两类文档：
 
@@ -101,6 +112,22 @@ python -m venv .venv
 
 候选集先用 FTS5 trigram 索引粗筛，再对候选算全分，最后按最长公共子串预算收敛。
 
+同一套算法有两份实现，**打分公式逐条对齐**：
+
+| | Python（默认回退） | Rust 内核（有则优先） |
+| --- | --- | --- |
+| 候选 | FTS5 trigram 粗筛 6000 条 | 自建 4-gram 倒排索引，全部命中 |
+| 出分 | 逐条算余弦 + 覆盖度 | 逐 gram 累加 `acc[doc] += (c·w)·w·tf` |
+| 端到端 | 约 0.6 秒 | 约 0.04 秒 |
+
+换掉粗筛结构比换语言更重要：中位查询命中 7.8 万条，FTS5 的 bm25 光排序取 6000 条
+就要 0.14~0.29 秒。Rust 内核不做"排序取前 N"，而是把分数累加出来。
+
+改检索逻辑时**必须跑对照集**：`eval/make_golden.py` 在你自己库上抽 200 条真实查询、
+用 Python 引擎存下 top-10 当参照物；`eval/compare.py` 再拿另一份实现的结果去比，
+给出"每一名的分数都不低于参照"的比例——掉下 100% 就是漏候选或截断窗口设错。
+注意参照物必须由 **Python 引擎**生成（`QB_ENGINE=py`），否则等于自己跟自己比。
+
 完整的公式、参数、实测数字和已知局限见 **[docs/算法说明.md](docs/算法说明.md)**。
 
 ---
@@ -115,9 +142,13 @@ src/
   schema.sql      建表语句
   build_db.py     扫描目录 → 抽取 → 入库 → 建索引
   qc.py           入库质量自检（8 项）
-  search.py       检索与排序
+  search.py       检索与排序（分发：Rust 内核可用就走它，否则自己算）
+  engine_rust.py  Rust 内核的客户端（独立进程，启动失败/出错自动回退）
   server.py       FastAPI 服务（单页前端，无构建步骤）
   webui/index.html
+rust/search-core/ Rust 检索内核：4-gram 倒排索引 + IDF 加权打分（可选加速）
+eval/             对照集与验收脚本（make_golden.py / compare.py）
+scripts/          建库、导出公开仓库、基准测试、PDF 修复等工具
 deploy/           容器化部署 + Cloudflare 隧道
 pack/             离线发布包生成器
 docs/部署指南.md   怎么给同事用：本机 / 局域网 / 固定网址 / 服务器
