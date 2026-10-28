@@ -162,10 +162,21 @@ def rebuild_gram_df(conn: sqlite3.Connection) -> int:
     return len(counts)
 
 
-def _scan_one(job: tuple[str, str]) -> Letter:
-    """多进程用：一个 PDF 一个任务。"""
+def _scan_one(job: tuple[str, str]) -> tuple[Letter | None, tuple | None]:
+    """多进程用：一个 PDF 一个任务。
+
+    **单个文件解析失败不能拖垮整次建库。** 以前是 pool.map 直接调 scan_letter，
+    一份坏 PDF 抛异常，`list(pool.map(...))` 就把 930 份的解析结果全丢了
+    （实测 科创板-快可光伏电子 r1/r2 是权限位为负的加密 PDF，pdfminer 在
+    `struct.pack("<L", self.p)` 处抛 `'L' format requires 0 <= number <= 4294967295`，
+    整批 40 分钟的解析白跑）。
+    现在改成把异常收成返回值，跳过并报出来，其余照常入库。
+    """
     path, board = job
-    return scan_letter(path, board=board)
+    try:
+        return scan_letter(path, board=board), None
+    except Exception as exc:  # noqa: BLE001
+        return None, (path, type(exc).__name__, str(exc)[:160])
 
 
 def quick_hash(path: str) -> str:
@@ -183,10 +194,12 @@ def quick_hash(path: str) -> str:
 
 
 # 默认扫描范围：目录 -> 板块。目录不存在就跳过，所以少一个板块也能跑。
-# 创业板的 PDF 是【回复】，问题原文要从里面的提问段抄回来（见 src/extract.REPLY_SOURCED）。
+# 创业板/深主板/科创板的 PDF 是【回复】，问题原文要从里面的提问段抄回来
+# （见 src/extract.REPLY_SOURCED）。
 # 目录结构：问询函/<板块名>/*.pdf —— 一个板块一个子目录。
 DEFAULT_SOURCES = (("问询函/北交所", "北交所"), ("问询函/新三板", "新三板"),
-                   ("问询函/创业板", "创业板"), ("问询函/深主板", "深主板"))
+                   ("问询函/创业板", "创业板"), ("问询函/深主板", "深主板"),
+                   ("问询函/科创板", "科创板"), ("问询函/沪主板", "沪主板"))
 
 
 def main() -> None:
@@ -202,6 +215,9 @@ def main() -> None:
     ap.add_argument("--force-board", action="append", default=[], metavar="板块",
                     help="强制重新解析指定板块。改过抽取规则（src/extract.py）但 PDF 没变时用，"
                          "只重抽这一个板块，其余板块照常走 hash 跳过")
+    ap.add_argument("--force-file", action="append", default=[], metavar="PDF",
+                    help="强制重新解析指定的一份或几份 PDF（相对项目根或绝对路径都行）。"
+                         "改了抽取规则、但只有个别文件受影响时用它，比 --force-board 快得多")
     args = ap.parse_args()
 
     # --rebuild 是从空库重来：磁盘上已经没有的 PDF，其 letter/question/query 会永久消失。
@@ -268,22 +284,40 @@ def main() -> None:
         if unknown:
             raise SystemExit("--force-board 里的板块没有对应目录：" + "、".join(sorted(unknown)))
 
+    # --force-file：按"绝对路径"比对，免得 ./a/b.pdf、a\b.pdf 这种写法对不上
+    def _key(p) -> str:
+        return str(Path(p).resolve()).replace("\\", "/")
+
+    force_files = {_key(p) for p in args.force_file}
+    if force_files:
+        have = {_key(p) for p, _b in jobs}
+        missing = force_files - have
+        if missing:
+            raise SystemExit("--force-file 里的文件不在扫描范围（或不存在）：\n  "
+                             + "\n  ".join(sorted(missing)))
+
     if not args.rebuild:
         known = {r[0] for r in conn.execute("SELECT file_hash FROM letter")}
         if known:
             before = len(jobs)
-            jobs = [j for j in jobs if j[1] in force_boards or quick_hash(j[0]) not in known]
+            jobs = [j for j in jobs
+                    if j[1] in force_boards or _key(j[0]) in force_files
+                    or quick_hash(j[0]) not in known]
             print("其中 " + str(before - len(jobs)) + " 份内容与库里一致（sha256 相同），跳过解析；"
                   "本次实际解析 " + str(len(jobs)) + " 份"
                   + ("（其中 " + "、".join(sorted(force_boards)) + " 为 --force-board 强制重抽）"
-                     if force_boards else ""))
+                     if force_boards else "")
+                  + ("（另有 " + str(len(force_files)) + " 份由 --force-file 强制重抽）"
+                     if force_files else ""))
 
     print("扫描 " + str(len(jobs)) + " 份 PDF（并行 " + str(max(args.jobs, 1)) + " 进程）…")
     if args.jobs > 1:
         with ProcessPoolExecutor(max_workers=args.jobs) as pool:
-            letters = list(pool.map(_scan_one, jobs))
+            results = list(pool.map(_scan_one, jobs))
     else:
-        letters = [scan_letter(p, board=b) for p, b in jobs]
+        results = [_scan_one(j) for j in jobs]
+    letters = [r[0] for r in results if r[0] is not None]
+    failed = [r[1] for r in results if r[0] is None]
 
     total_added = total_skipped = 0
     empty_pages: list[Letter] = []
@@ -293,7 +327,8 @@ def main() -> None:
             # 否则它安安静静进库、query 为 0，谁也不知道漏了。
             empty_pages.append(letter)
         added, skipped = import_letter(conn, letter, sources,
-                                        force=letter.board in force_boards)
+                                        force=(letter.board in force_boards
+                                               or _key(letter.file_path) in force_files))
         kept = len(letter.queries) - skipped
         print(f"{letter.board}/{letter.company:<8} 页数{letter.pages:>3}  "
               f"问题节{len(letter.questions):>3}  最小query {kept:>3}"
@@ -314,6 +349,13 @@ def main() -> None:
               "多半是扫描件/纯图片），已入库但不会有任何 query，请人工确认：")
         for letter in empty_pages:
             print("     " + letter.board + "/" + letter.company + "  " + letter.file_path)
+
+    if failed:
+        print()
+        print("[警告] 下面 " + str(len(failed)) + " 份 PDF 解析失败，已跳过（不入库，"
+              "库里不会有它们的内容）。加密 PDF 可以先用 pikepdf 解密另存再重跑：")
+        for path, kind, msg in failed:
+            print("     " + path + "  [" + kind + "] " + msg)
 
     n = conn.execute("SELECT COUNT(*) FROM query").fetchone()[0]
     fts = conn.execute("SELECT COUNT(*) FROM query_fts").fetchone()[0]

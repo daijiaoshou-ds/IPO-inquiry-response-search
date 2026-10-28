@@ -114,10 +114,23 @@ def iter_lines(pdf_path: str, skip_junk: bool = True,
 
     want_font 目前没人默认启用（字体方案被实测否决，见文件开头的说明），
     留着是因为它在个别文档上确实能把问题段切得更干净，可以当兜底手段。
+
+    **每页处理完必须 page.close()。** pdfplumber 的 `pdf.pages` 会把每一页的
+    Page 对象（以及它缓存下来的全部字符对象）一直留在内存里，内存随页数线性涨：
+    实测 919 页 / 16 MB 的一份沪主板回复，解析峰值 2.56 GB（约 2.8 MB/页），
+    而且结束后还不释放。10 个进程一起跑就能把机器内存吃光（2026-10 实际发生过，
+    机器卡死后强制重启）。close() 会把该页的 _objects / textmap 缓存清掉，
+    峰值降到跟单页一个量级。
     """
     with pdfplumber.open(pdf_path) as pdf:
-        for pno, page in enumerate(pdf.pages, 1):
-            for line in _page_lines(pno, page):
+        pages = pdf.pages
+        for pno, page in enumerate(pages, 1):
+            try:
+                lines = _page_lines(pno, page)
+            finally:
+                # 无论这一页解析成功与否都要清缓存，否则一份坏页就把整份文档钉在内存里
+                page.close()
+            for line in lines:
                 if skip_junk and line.is_junk:
                     continue
                 if want_font is not None and not want_font(line.font):

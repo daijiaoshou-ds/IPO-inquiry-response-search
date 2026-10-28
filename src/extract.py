@@ -49,7 +49,7 @@ def iter_lines(*args, **kwargs):
 # 后面完全复用同一套抽取规则。
 #
 # （字体过滤的能力保留在 pdfread.want_font 里，作为备用手段，默认不启用。）
-REPLY_SOURCED = {"创业板", "深主板"}
+REPLY_SOURCED = {"创业板", "深主板", "科创板", "沪主板"}
 # 回复正文的起点标记。各家写法不同，实测见过：
 #     "回复："          （埃索凯、初源新材）
 #     "回复说明："       （迪嘉药业）—— 原来只写「回复[:：]」会漏掉这个，
@@ -126,7 +126,14 @@ NSP_QUESTION_RE = re.compile(
 # 正文里偶有以"二、三…"开头的句子被误认成章节标题（实测 3 个章节名带逗号、
 # 长达 25 字）。章节标题是短名词短语，不含句读，据此排掉。
 CHAPTER_BAD_RE = re.compile(r"[，。；,;:：]")
-QUESTION_RE = re.compile(r"^问题\s*(\d{1,3})\s*[\.、]?\s*(.*)$")
+# 「问题1.关于…」。前缀允许带「问询」——科创板 2021 年那批有的写成
+#     「问询问题1：关于历史沿革」
+# 只认行首的「问题」会整份 0 条（实测 科创板-赛伦生物技术 r1，383 页 / 27 题全丢）。
+# 这条是纯增量：原来的 ^问题 照样命中，加了前缀只是多认一种写法。
+QUESTION_RE = re.compile(r"^(?:问询)?问题\s*(\d{1,3})\s*[\.、：:]?\s*(.*)$")
+# 第三种写法：「第1题、关于重大仲裁、诉讼纠纷」（实测 科创板-龙芯中科技术 r2）。
+# 只认紧跟着「关于」的那种，避免把回复正文里的"第1题回复中已说明…"当成新问题。
+QUESTION_TI_RE = re.compile(r"^第\s*(\d{1,3})\s*题\s*[、\.：:]\s*关于\S")
 # 「问题九、关于在建工程」：少数回复文档用汉字数字编问题号。
 # 实测 联纲光电科技 r2 全篇 11 道题全是这种写法，阿拉伯数字一个都没有。
 # 不认它，这份文档就被判成"没有'问题N'标题"、退化成用行首裸「请发行人」合成问题；
@@ -337,6 +344,7 @@ def scan_letter(pdf_path: str, company: str | None = None, board: str = "北交�
     # 这份文档到底有没有"问题N"标题？没有就退化成用行首裸「请发行人」切问题。
     head_hits = sum(1 for l in lines
                     if QUESTION_RE.match(l.text) or QUESTION_CN_RE.match(l.text)
+                    or QUESTION_TI_RE.match(l.text)
                     or NSP_QUESTION_RE.match(l.text))
     ask_hits = sum(1 for l in lines if ASK_START_RE.match(l.text))
     # 光看"标题少于 2 个"不够：深主板-东实汽车科技 r1（535 页）正文里恰好有两条
@@ -387,6 +395,8 @@ def scan_letter(pdf_path: str, company: str | None = None, board: str = "北交�
                 num = cn_int(m_cn.group(1))
                 if num is not None:
                     no, title = num, line.text.strip()
+            elif QUESTION_TI_RE.match(line.text):
+                no, title = int(QUESTION_TI_RE.match(line.text).group(1)), line.text.strip()
         if no is None and (board in REPLY_SOURCED or board == "新三板"):
             # 回复回抄的问询函问题标题有三种写法，实测都出现过：
             #     问题1关于创业板定位 / 问题1.关于技术创新性和市场空间 / 1.关于行业发展和发行人业绩波动

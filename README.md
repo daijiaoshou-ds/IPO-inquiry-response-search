@@ -56,7 +56,7 @@ python -m venv .venv
 ### 自己构建索引
 
 把问询函 PDF 按 `公司_r轮次.pdf` 命名，放进按板块分好的子目录（`问询函/北交所/`、`问询函/新三板/`、
-`问询函/创业板/`、`问询函/深主板/`），然后：
+`问询函/创业板/`、`问询函/深主板/`、`问询函/科创板/`、`问询函/沪主板/`），然后：
 
 ```powershell
 .\.venv\Scripts\python.exe -m src.build_db --db data/queries.db --rebuild --jobs 6
