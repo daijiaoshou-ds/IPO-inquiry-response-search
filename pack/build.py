@@ -26,7 +26,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "1.5"
+VERSION = "1.6"
 RELEASE = time.strftime("%Y-%m")      # 数据截止月份，也是发布日期
 AUTHOR = "呆叫兽"
 NAME = "问询检索"
@@ -43,7 +43,9 @@ SRC_DB = ROOT / "data" / "queries.db"
 APP_FILES = ["__init__.py", "server.py", "search.py", "extract.py", "normalize.py",
              "engine_rust.py",
              # 上传整份函用：ingest 分派 pdf/docx，pdfread 是 PDF 逐行还原
-             "ingest.py", "pdfread.py"]
+             "ingest.py", "pdfread.py",
+             # 导出 Excel 用：server 在模块级 import，缺了它连服务都起不来
+             "guide.py"]
 DROP_INDEXES = ["idx_q_align", "idx_q_src", "idx_q_norm", "idx_q_letter"]
 
 
@@ -157,7 +159,8 @@ def main() -> None:
            "--disable-pip-version-check", "--target", str(target), "fastapi", "uvicorn",
            # 网页上传整份函要用的解析组件（pdfplumber 依赖 pdfminer.six + Pillow，
            # python-docx 依赖 lxml，合计约 37 MB 解压后）
-           "pdfplumber", "python-docx"]
+           # openpyxl 是导出《参考答案指引》用的；server 会 import guide.py，缺了直接起不来
+           "pdfplumber", "python-docx", "openpyxl"]
     print("   " + " ".join(cmd[3:]))
     if subprocess.run(cmd).returncode != 0:
         sys.exit("pip install 失败")

@@ -28,16 +28,52 @@ HEAD_RE = re.compile(
     r"|[一二三四五六七八九十]{1,3}、\s*关于)"
 )
 
+# 第四种体例：题号是 Word 的**自动编号**，`paragraph.text` 里根本读不到。
+# 裕富照明那份北交所函就是这样——正文里只有「股权结构清晰稳定性」这一行标题，
+# 「问题1.」只出现在目录里（目录域还带着 TAB + 页码）。
+# 判据：短行、不含标点、下一行是正文。
+#
+# 起初只认「下一行以 根据/请/（1） 开头」，结果被库里的真实分布推翻：
+# 57,670 个问题节里，"一题第一段"的开头是 补充披露 3339 / 报告期 2442 /
+# 说明报告 2143 / 发行人 1673 / 补充说明 1245 / 结合发行 985 / 按照《 814…
+# 按开头词判会漏掉一大半体例。改成"下一行足够长（≥30 字）"这个与用词无关的
+# 信号——标题就一行短句，正文段落必然长，这条对哪个交易所都成立。
+BODY_START_RE = re.compile(r"^(?:根据|依据|截至|请|报告期|[（(]\s*\d{1,2}\s*[）)])")
+BODY_LONG = 30
+TITLE_MAX = 30
+TITLE_BAD = re.compile(r"[，。；：,;:（）()]")
+# 正文里也会出现短行（"上述事项"这种），靠这几个开头词排掉，避免把段落头当题目
+TITLE_STOP = re.compile(r"^(?:上述|如下|其中|因此|据此|综上|此外|同时|例如|具体|另|"
+                        r"请|根据|依据|截至)")
+
+# Word 目录域导出成文本是「标题<TAB>页码」。不剔掉的话，目录里的「问题1.」
+# 会被当成正文题目，一份 11 题的函能切出 22 题（前 11 题还是空的）。
+TOC_RE = re.compile(r"\t\s*\d{1,4}\s*$")
+
 # 纯"核查并发表明确意见"这类不是要回答的问题，只是程序性要求。
 # 库里也存在（scan_letter 不收它们），指引里更不该出现——检索它只会捞出一堆
 # 同样的模板话。只在 docx / 文本这条路上过滤，不动 scan_letter。
+#
+# 最后一支是「并发表明确意见，说明核查方法、范围、依据及结论。」这种：
+# 它由 split_user_input 从「请保荐机构…核查并发表明确意见」里拆出来，
+# 前面挂着逗号，不是句首的「请…核查」，前两支都拦不住（裕富照明题1 的第 13 小问）。
 BOILER_RE = re.compile(
     r"^(?:请[^：:]{0,12}[：:])?\s*(?:补充)?核查(?:上述|以下)?(?:事项)?[，,、]?\s*"
     r"(?:并)?(?:发表)?明确意见|^(?:补充)?核查上述事项$|^请[^：:]{0,12}核查并发表明确意见$"
-    r"|^(?:并)?(?:再次)?(?:审慎)?(?:发表)?明确意见[。；]?$")
+    r"|^[，,、；;]?\s*(?:并)?(?:再次)?(?:审慎)?(?:发表)?明确意见")
 
 # 函尾的程序性段落（不是问题）："除上述问题外…""请你们在20个交易日内…""特此函告"
 TAIL_RE = re.compile(r"除上述问题外|个交易日内|特此函告|专此函达|请审慎|电子版材料")
+
+# 「结合资金流水情况核查上述事项并发表明确意见」这类：以"核查…发表明确意见"
+# 收尾的短句，是程序性要求而不是要回答的问题。BOILER_RE 只认句首，拦不住它
+# （前面挂着"结合…"），所以单独用一条"短句 + 含该结构"的判据。
+OPINION_RE = re.compile(r"核查.{0,25}(?:并)?发表明确意见")
+# 「说明核查方式、核查范围、核查结论及依据」——纯模板，几乎没有公司特异性，
+# 检索它只会返回一堆同样的句子。同样是短句才判。
+CHECK_WAY_RE = re.compile(r"^说明核查(?:方式|程序|方法|范围|过程|结论|意见)")
+OPINION_MAX = 45
+CHECK_WAY_MAX = 32
 
 MIN_SUB = 10          # 短于这个字数的碎片不要（"并发表明确意见" 这类）
 
@@ -65,11 +101,44 @@ def read_docx_text(path: str | Path) -> str:
     return "\n".join(lines)
 
 
+def _find_heads(text: str) -> list[int]:
+    """题目起始位置（字符偏移）。
+
+    两条规则取并集：
+      ① 带题号的（问题1. / 1.关于… / 一、关于…）
+      ② 题号被 Word 自动编号吃掉的：短标题行 + 下一行是正文开头
+    """
+    lines = text.split("\n")
+    offs, pos = [], 0
+    for ln in lines:
+        offs.append(pos)
+        pos += len(ln) + 1
+
+    heads = []
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if not s:
+            continue
+        if HEAD_RE.match(s):
+            heads.append(offs[i])
+            continue
+        if (2 <= len(s) <= TITLE_MAX and not TITLE_BAD.search(s)
+                and not TITLE_STOP.match(s) and i + 1 < len(lines)):
+            nxt = lines[i + 1].strip()
+            if BODY_START_RE.match(nxt) or len(nxt) >= BODY_LONG:
+                heads.append(offs[i])
+    return heads
+
+
 def split_letter_text(text: str) -> SimpleNamespace:
     """纯文本 -> {questions, queries}。先切题，再每题内部复用 split_user_input。"""
     from .extract import split_user_input
 
-    heads = [m.start() for m in HEAD_RE.finditer(text)]
+    # 先剔目录行，再切
+    lines = [ln for ln in text.split("\n") if ln.strip()]
+    text = "\n".join(ln for ln in lines if not TOC_RE.search(ln))
+
+    heads = _find_heads(text)
     if len(heads) >= 2:
         chunks = [(heads[i], heads[i + 1] if i + 1 < len(heads) else len(text))
                   for i in range(len(heads))]
@@ -92,7 +161,9 @@ def split_letter_text(text: str) -> SimpleNamespace:
 
         subs = split_user_input(chunk)
         subs = [x for x in subs
-                if len(x) >= MIN_SUB and not BOILER_RE.match(x) and not TAIL_RE.search(x)]
+                if len(x) >= MIN_SUB and not BOILER_RE.match(x) and not TAIL_RE.search(x)
+                and not (len(x) < OPINION_MAX and OPINION_RE.search(x))
+                and not (len(x) < CHECK_WAY_MAX and CHECK_WAY_RE.match(x))]
         # 一段都拆不出来（整题就一句话，或格式怪异）：整段当一个小问
         if not subs:
             body = chunk[len(first):].strip() if len(chunk) > len(first) else chunk
