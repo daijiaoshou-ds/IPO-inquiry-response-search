@@ -218,6 +218,9 @@ def main() -> None:
     ap.add_argument("--force-file", action="append", default=[], metavar="PDF",
                     help="强制重新解析指定的一份或几份 PDF（相对项目根或绝对路径都行）。"
                          "改了抽取规则、但只有个别文件受影响时用它，比 --force-board 快得多")
+    ap.add_argument("--force-from-file", metavar="TXT",
+                    help="从文本文件读要强制重抽的 PDF 路径，一行一个。"
+                         "要重抽的函有上百份时用这个，命令行塞不下那么多参数")
     args = ap.parse_args()
 
     # --rebuild 是从空库重来：磁盘上已经没有的 PDF，其 letter/question/query 会永久消失。
@@ -288,7 +291,11 @@ def main() -> None:
     def _key(p) -> str:
         return str(Path(p).resolve()).replace("\\", "/")
 
-    force_files = {_key(p) for p in args.force_file}
+    force_list = list(args.force_file)
+    if args.force_from_file:
+        lines = Path(args.force_from_file).read_text(encoding="utf-8").splitlines()
+        force_list += [x.strip() for x in lines if x.strip() and not x.startswith("#")]
+    force_files = {_key(p) for p in force_list}
     if force_files:
         have = {_key(p) for p, _b in jobs}
         missing = force_files - have

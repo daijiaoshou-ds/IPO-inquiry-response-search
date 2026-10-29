@@ -1,0 +1,15 @@
+{
+    // rust-analyzer 默认在 VSCode 打开的【工作区根目录】里找 Cargo.toml。
+    // 本仓库的 Rust 代码在 rust/search-core/ 下，根目录没有 Cargo.toml，
+    // 于是它每次启动都报 FetchWorkspaceError: failed to fetch workspace
+    // （本质是 cargo metadata 在根目录执行失败）。
+    //
+    // 用 linkedProjects 直接指到这个 crate，不必把根目录变成 Rust 工作区——
+    // 那样 target/ 会跑到仓库根目录，pack/build.py 里找 search-core.exe
+    // 的路径也得跟着改，不划算。
+    "rust-analyzer.linkedProjects": [
+        "rust/search-core/Cargo.toml"
+    ],
+    // 本项目的行尾是 CRLF、缩进 4 空格，跟 rustfmt 默认一致，不用额外配
+    "files.eol": "\r\n"
+}

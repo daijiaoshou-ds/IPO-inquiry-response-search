@@ -58,7 +58,19 @@ REPLY_SOURCED = {"创业板", "深主板", "科创板", "沪主板"}
 #     "【问题回复】"     （新研工业）
 #     "[回复]"          （长联新材料科技）—— 半角方括号，原来也只认全角【】，
 #                        漏掉之后这家公司 4 道题各吞了 3600~6300 字的回复正文
-ANSWER_MARK_RE = re.compile(r"^\s*(回复[^。；：]{0,6}[:：]|[【\[][^】\]]{2,14}[】\]])")
+# 还有一类写法：「编号 + 主体 + 回复」，没有冒号，行首也不是"回复"——
+#     1.1 发行人回复      （昆仑太科技术 r1，第 5 页就开始答）
+#     13发行人回复1、…    （页码和正文揉在同一行）
+#     15.1发行人说明公司已按照…
+# 只认"编号 + 主体"，不认单独的"发行人回复"：提问段里引用「保荐机构关于发行人
+# 回复的总体意见」这种句子是有的，那条会被误判成回答起点。
+ANSWER_MARK_RE = re.compile(
+    r"^\s*(?:"
+    r"\d{1,2}(?:\.\d{1,2})+\s*(?:发行人|公司|本所|保荐机构|申报会计师)?(?:回复|说明)"
+    r"|\d{1,3}\s*(?:发行人|公司)(?:回复|说明)"
+    r"|回复[^。；：]{0,6}[:：]"
+    r"|[【\[][^】\]]{2,14}[】\]]"
+    r")")
 
 # 回复正文的【结构】起点：一级小标题「一、……」。
 #
@@ -254,8 +266,39 @@ def _clean(t: str) -> str:
 # 切分残留的接续碎片（句子的后半截被切成了独立 query）。
 # 用整词前缀而不是单字：单字「以」会把「以表格形式补充说明…」这种
 # 正经问题一起误杀（实测新三板 1175 条里误杀 2%），而「以及」才是真碎片。
-_FRAGMENT_PREFIX = ("的", "并", "及", "同时", "其中", "此外", "以及", "、", "，", "。", "；")
+# ---- 判断「这一行是不是把提问段复述了一遍」----
+#
+# 回复体例里，「回复：」之后常把提问原样重说一遍再作答，有两种写法：
+#   ① 只在开头复述一次（多数文档）
+#   ② 每个小问答完都再复述一次（科创板-凌云光技术 r1：问题1 的（3）（4）分别复述）
+# ① 靠位置就能认（紧跟回复标记），② 必须靠文本——所以判据是"这一行的正文已经
+# 出现在本题的提问段里"。不认出来的后果：复述行被当成新题，后面的答复正文
+# （含存货跌价准备的整张金额表）全被收进那条 query，实测 3446 字。
+_RESTATE_PREFIX_RE = re.compile(r"^请[^：:]{0,20}[：:]")
+_KEY_STRIP_RE = re.compile(r"[\s\u3000，。；;、：:（）()“”\"'’‘]")
 
+
+def _key_text(t: str) -> str:
+    return _KEY_STRIP_RE.sub("", t)
+
+
+def _ask_key(q: dict) -> str:
+    """本题提问段的归一化文本。按 body 总长缓存，body 长了才重算。"""
+    n = sum(len(x) for x in q["body"])
+    if q.get("_ask_key_len") != n:
+        q["_ask_key"] = _key_text("".join(q["body"]))
+        q["_ask_key_len"] = n
+    return q["_ask_key"]
+
+
+def _is_restate(line: str, key: str) -> bool:
+    if not key:
+        return False
+    probe = _key_text(_RESTATE_PREFIX_RE.sub("", line))[:24]
+    return len(probe) >= 10 and probe in key
+
+
+_FRAGMENT_PREFIX = ("的", "并", "及", "同时", "其中", "此外", "以及", "、", "，", "。", "；")
 
 def _is_fragment(t: str) -> bool:
     t = t.lstrip()
@@ -296,6 +339,11 @@ def scan_letter(pdf_path: str, company: str | None = None, board: str = "北交�
     pages = 0
     # 回复文档：见到分界标记之后，这个问题的剩余部分都是回复正文，不再收
     answer_started = False
+    # 「回复：」之后常把提问段原样复述一遍再作答（科创板-凌云光技术 r1 每题都这样）。
+    # 复述行同样以「请发行人」开头，会被当成下一题的起点，于是整段答复正文被收进
+    # 那条 query（实测 3446 字，含存货跌价准备的全部金额表格）。
+    # 用位置判据：紧跟在「回复：」后面、且同样以「请…」开头的行，就是复述。
+    restate_window = False
     # 回复文档里已经出现过的问题编号。回复正文内部也常有「3、关于自然人的
     # 境外账户」这种小标题，和问题标题长得一模一样；但真问题每个编号只出现
     # 一次，所以"编号已出现过"就是它是正文小标题的铁证。
@@ -427,12 +475,33 @@ def scan_letter(pdf_path: str, company: str | None = None, board: str = "北交�
             answer_started = False
             continue
 
+        # 复述窗口：只认"紧跟在回复标记后面"的那几行提问。遇到第一行真正的正文
+        # （不是「请…」开头）就关窗——之后再出现的「请发行人」是下一题，不能吞。
+        if restate_window:
+            if line.text in running_headers or not line.text.strip():
+                continue
+            if not ASK_START_RE.match(line.text):
+                restate_window = False
+
         # 没有"问题N"标题的回复文档：行首的裸"请发行人"就是新问题的开始。
         # 只在【还没开始】或【正处在上一题的回复正文里】时才认，
         # 免得把一道题内的「请发行人：…请保荐人…」拆成两道。
         if use_ask_start and (cur_q is None or answer_started) and ASK_START_RE.match(line.text):
+            if restate_window or (answer_started and cur_q is not None
+                                  and _is_restate(line.text, _ask_key(cur_q))):
+                # 「回复：」之后复述的提问段。跳过，继续待在回复模式里；
+                # 不跳的话会开一道不存在的新题，把答复正文全收进 query。
+                # 两个判据一起用：位置（紧跟回复标记）覆盖"开头复述一次"的文档，
+                # 文本重合覆盖"每个小问答完都再复述一遍"的文档（凌云光技术 r1）。
+                continue
             close_q(cur_q)
             synth_no += 1
+            # 合成题的编号必须避开真实「问题N」已经用掉的号。撞号的后果不是
+            # 少一条，而是两个完全无关的问题在末尾 merge 时被合并成一条，
+            # body 拼到 1.3 万字（科创板-凌云光技术 r1 的问题1 就是这样：
+            # 真标题「问题1. 关于生产模式」+ 第 36 页一条合成题合并）。
+            while synth_no in seen_nos:
+                synth_no += 1
             cur_q = {
                 "chapter": chapter,
                 "no": synth_no,
@@ -450,6 +519,7 @@ def scan_letter(pdf_path: str, company: str | None = None, board: str = "北交�
                 continue
             if board in REPLY_SOURCED and ANSWER_MARK_RE.match(line.text):
                 answer_started = True
+                restate_window = True
                 continue
             # 结构起点：一级标题「一、…」。加了 has_asker 这道闸：提问段里必然已经
             # 出现过「请发行人/请保荐人…」，如果一个"请"都还没出现就见到「一、」，
