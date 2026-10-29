@@ -14,10 +14,11 @@ import secrets
 import sqlite3
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
+from .ingest import load_bytes
 from .search import search_grouped, siblings, stats, top_grams
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -128,6 +129,84 @@ def api_siblings(question_id: str) -> dict:
     conn = connect()
     try:
         return {"items": siblings(conn, question_id)}
+    finally:
+        conn.close()
+
+
+# 一份函最多多少个小问还愿意跑。50~130 是常态，超过这个数多半是文档没拆对，
+# 与其让用户等三分钟，不如直接报错让人检查文件。
+MAX_SUBS = 400
+MAX_UPLOAD = 60 * 1024 * 1024
+
+
+@app.post("/api/upload")
+async def api_upload(file: UploadFile = File(...),
+                     board: str = Form(""),
+                     top: int = Form(5),
+                     expand: bool = Form(False)) -> dict:
+    """上传一整份问询函（pdf / docx / txt），自动拆题拆小问，逐个检索。
+
+    返回结构和 /api/search 一致，多两个字段：`source`（文件名）与每组上的
+    `label`（题N · 小问K），前端直接复用同一套渲染。
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="文件是空的")
+    if len(raw) > MAX_UPLOAD:
+        raise HTTPException(status_code=413, detail="文件太大（上限 60 MB）")
+    try:
+        letter = load_bytes(raw, file.filename or "", board=board.strip())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:                      # 坏 PDF、加密 PDF 等
+        raise HTTPException(status_code=400,
+                            detail="解析失败：" + type(e).__name__ + " " + str(e)[:120])
+
+    subs = list(letter.queries)
+    if not subs:
+        raise HTTPException(status_code=400,
+                            detail="没能从这份文件里拆出问题，确认一下是不是问询函正文")
+    if len(subs) > MAX_SUBS:
+        raise HTTPException(status_code=400,
+                            detail="拆出 %d 个小问，超过上限 %d，像是拆分出了问题，请检查文件"
+                                   % (len(subs), MAX_SUBS))
+
+    use_board = None if expand else (board.strip() or None)
+    conn = connect()
+    try:
+        groups, merged = [], {}
+        for q in subs:
+            r = search_grouped(conn, q.raw_text, board=use_board, top=top,
+                               include_boilerplate=False, expand=bool(expand))
+            # 一个小问内部若又被拆成几句，在这里合回一条，界面上仍是"一问一组"
+            hits, seen = [], set()
+            for g in r["groups"]:
+                for h in g["hits"]:
+                    if h["q_id"] in seen:
+                        continue
+                    seen.add(h["q_id"])
+                    hits.append(h)
+                    old = merged.get(h["q_id"])
+                    if old is None or h["score"] > old["score"]:
+                        merged[h["q_id"]] = h
+            hits.sort(key=lambda h: (-h["score"], h["q_id"]))
+            cover = r["groups"][0]["cover"] if r["groups"] else {"strong": [], "weak": [], "ratio": 0}
+            groups.append({
+                "text": q.raw_text,
+                "label": "题%s · 小问%s" % (q.question_no, q.item_no),
+                "question": q.question,
+                "hits": hits[:top],
+                "cover": cover,
+            })
+        flat = sorted(merged.values(), key=lambda h: (-h["score"], h["q_id"]))[:top]
+        return {
+            "source": file.filename,
+            "kind": getattr(letter, "kind", ""),
+            "questions": [{"no": q["no"], "title": q["title"]} for q in letter.questions],
+            "parts": [g["text"] for g in groups],
+            "groups": groups,
+            "flat": flat,
+        }
     finally:
         conn.close()
 

@@ -41,7 +41,9 @@ SRC_DB = ROOT / "data" / "queries.db"
 
 # 服务端真正用到的文件；pdfread / build_db 这些不进包
 APP_FILES = ["__init__.py", "server.py", "search.py", "extract.py", "normalize.py",
-             "engine_rust.py"]
+             "engine_rust.py",
+             # 上传整份函用：ingest 分派 pdf/docx，pdfread 是 PDF 逐行还原
+             "ingest.py", "pdfread.py"]
 DROP_INDEXES = ["idx_q_align", "idx_q_src", "idx_q_norm", "idx_q_letter"]
 
 
@@ -152,7 +154,10 @@ def main() -> None:
     # 必须走 subprocess（而不是 os.system）：本项目的路径含中文，
     # os.system 会让 cmd 用 OEM 码页重新解析一遍，中文路径直接报"文件名语法不正确"。
     cmd = [sys.executable, "-m", "pip", "install", "--quiet", "--no-warn-script-location",
-           "--disable-pip-version-check", "--target", str(target), "fastapi", "uvicorn"]
+           "--disable-pip-version-check", "--target", str(target), "fastapi", "uvicorn",
+           # 网页上传整份函要用的解析组件（pdfplumber 依赖 pdfminer.six + Pillow，
+           # python-docx 依赖 lxml，合计约 37 MB 解压后）
+           "pdfplumber", "python-docx"]
     print("   " + " ".join(cmd[3:]))
     if subprocess.run(cmd).returncode != 0:
         sys.exit("pip install 失败")

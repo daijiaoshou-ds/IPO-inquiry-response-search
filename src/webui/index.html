@@ -156,6 +156,15 @@
   textarea::placeholder { color: var(--muted); }
   .tools { display: flex; align-items: center; gap: 12px; margin-top: 13px; flex-wrap: wrap; }
   .tools .hint { color: var(--muted); font-size: 12.5px; }
+  .upload { font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer;
+            border: 1px dashed var(--border); border-radius: 10px; padding: 9px 15px;
+            display: inline-flex; align-items: center; gap: 7px; transition: all .15s ease; }
+  .upload:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .upload.busy { opacity: .6; pointer-events: none; }
+  textarea.dragging { border-color: var(--accent); background: var(--accent-soft); }
+  .filemeta { font-size: 12.5px; color: var(--muted); margin-top: 9px; }
+  .glabel { display: inline-block; margin-right: 8px; padding: 1px 7px; border-radius: 6px;
+            font-size: 11.5px; color: var(--accent); background: var(--accent-soft); }
   kbd { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; padding: 1px 6px;
         border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px;
         background: var(--quote-bg); color: var(--text-2); }
@@ -335,9 +344,14 @@
       </div>
       <textarea id="q" spellcheck="false" placeholder="把自家被问的问题粘进来（支持整段粘贴）&#10;&#10;例如：（1）期间费用核算准确性。根据申请文件：……请发行人：①说明销售费用明细项核算的具体内容……"></textarea>
       <div class="tools">
+        <label class="upload" id="upbtn" title="支持 pdf / docx / txt，整份问询函丢进来，自动拆题">
+          上传整份函
+          <input type="file" id="file" accept=".pdf,.docx,.txt,.md" hidden>
+        </label>
         <span class="hint">按 <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + <kbd>Enter</kbd> 直接搜索</span>
         <button class="primary" id="go">搜索</button>
       </div>
+      <div class="filemeta" id="filemeta"></div>
       <div class="chips" id="chips"></div>
     </div>
     <div id="results"></div>
@@ -570,6 +584,36 @@ function doSearch() {
   });
 }
 
+function uploadFile(f) {
+  if (!f) { return; }
+  var mb = f.size / 1048576;
+  $('filemeta').textContent = '已选：' + f.name + '（' + mb.toFixed(1) + ' MB），正在解析…';
+  $('upbtn').classList.add('busy');
+  $('results').innerHTML = '<div class="empty">正在解析文件、拆题、逐个小问检索…整份函大约 10 秒</div>';
+  var fd = new FormData();
+  fd.append('file', f);
+  fd.append('board', '');
+  fd.append('top', $('top').value);
+  fd.append('expand', 'true');
+  fetch('/api/upload', { method: 'POST', body: fd })
+    .then(function (r) {
+      if (!r.ok) {
+        return r.json().then(function (e) { throw new Error(e.detail || '上传失败'); });
+      }
+      return r.json();
+    })
+    .then(function (data) {
+      render(data);
+      $('filemeta').textContent = '来自 ' + data.source + '：' +
+        (data.questions || []).length + ' 道题 / ' + (data.groups || []).length + ' 个小问';
+    })
+    .catch(function (e) {
+      $('results').innerHTML = '<div class="banner warn">出错了：' + esc(e.message) + '</div>';
+      $('filemeta').textContent = '';
+    })
+    .then(function () { $('upbtn').classList.remove('busy'); });
+}
+
 function render(data) {
   var out = [];
   var groups = data.groups || [];
@@ -578,7 +622,11 @@ function render(data) {
     (g.hits || []).forEach(function (h) { if (h.score > best) { best = h.score; } });
   });
 
-  if (data.parts && data.parts.length > 1) {
+  if (data.source) {
+    out.push('<div class="banner split">已从「' + esc(data.source) + '」拆出 ' +
+             (data.questions || []).length + ' 道题 / ' + (data.groups || []).length +
+             ' 个小问，逐个小问检索（跨全部板块）</div>');
+  } else if (data.parts && data.parts.length > 1) {
     out.push('<div class="banner split">已把输入拆成 ' + data.parts.length + ' 个最小 query，分别检索后汇总</div>');
     out.push('<ul class="parts">' + data.parts.map(function (p, i) {
       return '<li><em>' + (i + 1) + '</em><span>' + esc(p) + '</span></li>';
@@ -591,7 +639,9 @@ function render(data) {
 
   groups.forEach(function (g, gi) {
     out.push('<div class="group">');
-    out.push('<div class="group-head"><em>' + (gi + 1) + '</em><p>' + esc(g.text) + '</p></div>');
+    out.push('<div class="group-head"><em>' + (gi + 1) + '</em><p>' +
+             (g.label ? '<span class="glabel">' + esc(g.label) + '</span>' : '') +
+             esc(g.text) + '</p></div>');
     out.push(coverBlock(g));
     if (!g.hits || !g.hits.length) {
       out.push('<div class="empty">没有找到相似的问题，试试勾选「扩大搜索范围」。</div>');
@@ -663,6 +713,31 @@ document.addEventListener('keydown', function (e) {
 });
 
 $('go').onclick = doSearch;
+
+$('file').addEventListener('change', function (e) {
+  if (e.target.files && e.target.files[0]) { uploadFile(e.target.files[0]); }
+  e.target.value = '';
+});
+
+['dragover', 'dragenter'].forEach(function (ev) {
+  $('q').addEventListener(ev, function (e) {
+    if (e.dataTransfer && e.dataTransfer.types.indexOf('Files') >= 0) {
+      e.preventDefault();
+      $('q').classList.add('dragging');
+    }
+  });
+});
+['dragleave', 'dragend'].forEach(function (ev) {
+  $('q').addEventListener(ev, function () { $('q').classList.remove('dragging'); });
+});
+$('q').addEventListener('drop', function (e) {
+  $('q').classList.remove('dragging');
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+    e.preventDefault();
+    uploadFile(e.dataTransfer.files[0]);
+  }
+});
+
 ['round', 'top', 'expand', 'boiler'].forEach(function (id) {
   $(id).addEventListener('change', function () {
     if ($('q').value.trim() && $('results').innerHTML) { doSearch(); }

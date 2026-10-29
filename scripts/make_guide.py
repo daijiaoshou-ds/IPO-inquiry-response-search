@@ -51,69 +51,10 @@ def band(score: float, exact: bool) -> str:
 
 # ---------------------------------------------------------------- 读入
 
-def load_from_pdf(path: Path, board: str):
-    from src.extract import scan_letter
-    return scan_letter(str(path), board=board)
-
-
-def read_docx(path: Path) -> str:
-    """Word 转纯文本。docx 的段落本来就是自然句，比 PDF 的硬换行干净得多。"""
-    import docx
-    d = docx.Document(str(path))
-    lines = [p.text.strip() for p in d.paragraphs if p.text.strip()]
-    for tb in d.tables:                 # 有时整道题被排成表格
-        for row in tb.rows:
-            for cell in row.cells:
-                if cell.text.strip():
-                    lines.append(cell.text.strip())
-    return "\n".join(lines)
-
-
-def load_from_text(text: str):
-    """纯文本 / Word 转来的文本：按「问题N」「一、关于」切题，段落切小问。
-
-    为什么不复用 split_user_input：那是给"人在搜索框里粘一段"设计的，靠
-    「请发行人」和「（1）…；」这类标记切，遇到 Word 转出来的整段文本会整段
-    吞成一条（实测 14 道题只出 14 个小问）。Word 的段落本身就是天然的小问
-    边界，按段落切更准。
-    """
-    from types import SimpleNamespace
-
-    heads = [m.start() for m in re.finditer(
-        r"(?m)^\s*(?:问题\s*\d{1,3}|[一二三四五六七八九十]{1,3}、\s*关于)", text)]
-    chunks = []
-    if len(heads) >= 2:
-        for i, s in enumerate(heads):
-            e = heads[i + 1] if i + 1 < len(heads) else len(text)
-            chunks.append(text[s:e].strip())
-    else:
-        # 没有题号：按空行分段，一段算一题
-        chunks = [c.strip() for c in re.split(r"\n\s*\n", text) if c.strip()]
-
-    questions, queries = [], []
-    for i, ch in enumerate(chunks, 1):
-        lines = [x.strip() for x in ch.split("\n") if x.strip()]
-        if not lines:
-            continue
-        first = lines[0]
-        title = re.sub(r"^问题\s*\d{1,3}\s*[\.、]?\s*", "", first)[:40]
-        questions.append({"no": i, "title": title, "page_start": 0, "page_end": 0})
-
-        # 小问 = 段落；太短的（标题、残句）并到上一条
-        subs: list[str] = []
-        for ln in lines[1:] if len(lines) > 1 else lines:
-            if len(ln) < 12 and subs:
-                subs[-1] = subs[-1] + ln
-            else:
-                subs.append(ln)
-        if not subs:
-            subs = [ch]
-        for k, s in enumerate(subs, 1):
-            queries.append(SimpleNamespace(
-                question_no=i, item_no=k, raw_text=s, sub_question=s,
-                question=title, page_start=0, page_end=0, is_boilerplate=False))
-    return SimpleNamespace(company=None, questions=questions, queries=queries,
-                           pages=0)
+def load_letter(path: Path, board: str):
+    """PDF / docx / txt 三路统一入口，拆分规则都在 src/ingest.py。"""
+    from src.ingest import load_file
+    return load_file(path, board=board)
 
 
 # ---------------------------------------------------------------- 检索
@@ -350,22 +291,17 @@ def main() -> None:
     t0 = time.perf_counter()
     if args.pdf:
         path = Path(args.pdf)
-        if not path.exists():
-            raise SystemExit("找不到文件：" + str(path))
-        letter = load_from_pdf(path, args.board)
-        source = path.name
     elif args.docx:
         path = Path(args.docx)
-        if not path.exists():
-            raise SystemExit("找不到文件：" + str(path))
-        letter = load_from_text(read_docx(path))
-        source = path.name
     else:
         path = Path(args.text)
-        if not path.exists():
-            raise SystemExit("找不到文件：" + str(path))
-        letter = load_from_text(path.read_text(encoding="utf-8"))
-        source = path.name
+    if not path.exists():
+        raise SystemExit("找不到文件：" + str(path))
+    try:
+        letter = load_letter(path, args.board)
+    except (ValueError, FileNotFoundError) as e:
+        raise SystemExit(str(e))
+    source = path.name
     t_split = time.perf_counter() - t0
 
     # 自动排除自己：文件名里的公司名，若库里存在就排掉
