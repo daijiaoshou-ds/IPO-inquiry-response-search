@@ -340,6 +340,8 @@ def search_one(conn: sqlite3.Connection, question: str, *, board=None, chapter=N
         # 所以过滤必须放行 chapter_std IS NULL，否则会静默漏掉三成七的库。
         where.append("(chapter_std = ? OR chapter = ? OR chapter_std IS NULL)")
         params.extend([chapter, chapter])
+    # 禁用是治理层决定，没有"放行"开关（区别于 is_boilerplate，那个可 include）
+    where.append("disabled = 0")
     if not include_boilerplate:
         where.append("is_boilerplate = 0")
 
@@ -601,7 +603,8 @@ def _grouped_via_rust(conn: sqlite3.Connection, eng, text: str, **kw) -> dict:
     for i in range(0, len(want), 800):
         chunk = want[i:i + 800]
         ph = ",".join("?" * len(chunk))
-        for r in conn.execute("SELECT * FROM query WHERE q_id IN (" + ph + ")", chunk):
+        for r in conn.execute(
+                "SELECT * FROM query WHERE q_id IN (" + ph + ") AND disabled = 0", chunk):
             rows[r["q_id"]] = r
 
     idf = load_idf(conn)
@@ -671,7 +674,8 @@ def search_grouped(conn: sqlite3.Connection, text: str, **kw) -> dict:
 def siblings(conn: sqlite3.Connection, question_id: str) -> list[dict]:
     rows = conn.execute(
         "SELECT seq_in_question, asker, sub_question, raw_text, char_len "
-        "FROM query WHERE question_id = ? ORDER BY seq_in_question", (question_id,)
+        "FROM query WHERE question_id = ? AND disabled = 0 ORDER BY seq_in_question",
+        (question_id,)
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -688,6 +692,8 @@ def stats(conn: sqlite3.Connection) -> dict:
             "SELECT round, COUNT(*) FROM letter GROUP BY round ORDER BY round")],
         "questions": conn.execute("SELECT COUNT(*) FROM question").fetchone()[0],
         "queries": conn.execute("SELECT COUNT(*) FROM query").fetchone()[0],
+        "banned": conn.execute(
+            "SELECT COUNT(*) FROM query WHERE disabled = 1").fetchone()[0],
         "grams": conn.execute("SELECT COUNT(*) FROM gram_df").fetchone()[0],
         "gram_n": GRAM_N,
         "companies": [r[0] for r in conn.execute(

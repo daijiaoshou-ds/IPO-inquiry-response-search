@@ -130,7 +130,8 @@ def import_letter(conn: sqlite3.Connection, letter: Letter,
             "INSERT INTO query(q_id,letter_id,question_id,company,board,round,chapter,"
             "chapter_std,question_no,question,sub_question,asker,item_no,seq_in_letter,"
             "seq_in_question,page_start,page_end,raw_text,norm_strict,norm_loose,norm_core,"
-            "char_len,is_boilerplate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "char_len,is_boilerplate,disabled) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)",
             (q_id(letter, q.seq), lid, question_id(letter, q.question_no), letter.company,
              letter.board, letter.round, q.chapter, chapter_std(q.chapter), q.question_no,
              q.question, q.sub_question, q.asker, q.item_no, q.seq,
@@ -141,6 +142,11 @@ def import_letter(conn: sqlite3.Connection, letter: Letter,
         conn.execute("INSERT INTO query_fts(q_id, norm_loose) VALUES(?,?)",
                      (q_id(letter, q.seq), q.norm_loose))
         added += 1
+    # 重导会 DELETE 掉 query 再插，标注必须从 query_ban 重新回填，
+    # 否则"标了 621 条、补一份新函之后又全回来了"，且没有任何报错。
+    conn.execute(
+        "UPDATE query SET disabled = 1 "
+        "WHERE letter_id = ? AND q_id IN (SELECT q_id FROM query_ban)", (lid,))
     return added, skipped
 
 
@@ -154,7 +160,9 @@ def rebuild_gram_df(conn: sqlite3.Connection) -> int:
     conn.execute("DELETE FROM gram_df")
     counts: dict[str, int] = {}
     n = GRAM_N
-    for row in conn.execute("SELECT norm_core FROM query WHERE norm_core <> ''"):
+    # disabled = 0：被禁用的条目既然不参与检索，也不该再影响 IDF 权重
+    for row in conn.execute(
+            "SELECT norm_core FROM query WHERE norm_core <> '' AND disabled = 0"):
         s = row[0]
         for g in {s[i:i + n] for i in range(len(s) - n + 1)}:
             counts[g] = counts.get(g, 0) + 1

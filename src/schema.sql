@@ -51,8 +51,23 @@ CREATE TABLE IF NOT EXISTS query (
   norm_loose      TEXT NOT NULL,         -- 去数字，宽召回
   norm_core       TEXT NOT NULL,         -- 再去掉通用法规/准则引用，**打分用**
   char_len        INTEGER,
-  is_boilerplate  INTEGER NOT NULL DEFAULT 0
+  is_boilerplate  INTEGER NOT NULL DEFAULT 0,   -- 内容层：自动判据认为无信息量，可 include_boilerplate 放行
+  disabled        INTEGER NOT NULL DEFAULT 0    -- 治理层：已禁用，永不返回（由 query_ban 派生）
 );
+
+-- 禁用名单：**独立表**，不写在 query 上。
+-- 因为 build_db.import_letter() 重导一份函是先 DELETE FROM query 再插，
+-- 标注若挂在那张表上会随重导一起消失，而且不报错。
+-- query.disabled 只是它的派生缓存（Rust 建索引时读，省得每次 join）。
+CREATE TABLE IF NOT EXISTS query_ban (
+  q_id       TEXT PRIMARY KEY,           -- 指向 query.q_id；不设外键，允许先标后导
+  kind       TEXT NOT NULL,              -- tail=函尾程序性通知 / long=超长疑似混入 / manual=人工
+  reason     TEXT,
+  created_at TEXT NOT NULL,
+  source     TEXT                        -- rule:tail-v1 / rule:long-v1 / manual
+);
+
+CREATE INDEX IF NOT EXISTS idx_ban_kind ON query_ban(kind);
 
 CREATE INDEX IF NOT EXISTS idx_q_align ON query(chapter_std, question_no);
 CREATE INDEX IF NOT EXISTS idx_q_src   ON query(board, round);

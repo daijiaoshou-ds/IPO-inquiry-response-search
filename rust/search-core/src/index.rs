@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 
-const MAGIC: &[u8; 8] = b"QBIDX001";
+const MAGIC: &[u8; 8] = b"QBIDX002";
 
 fn set32(b: &mut [u8], at: usize, v: u32) {
     b[at..at + 4].copy_from_slice(&v.to_le_bytes());
@@ -36,7 +36,8 @@ fn set32(b: &mut [u8], at: usize, v: u32) {
 fn set64(b: &mut [u8], at: usize, v: u64) {
     b[at..at + 8].copy_from_slice(&v.to_le_bytes());
 }
-const HEADER_LEN: usize = 128;
+// 136 = 原 128 + 8：末位 4 字节放禁用条数，用来和库里的 COUNT 对账
+const HEADER_LEN: usize = 136;
 const GT_ENTRY: usize = 32;
 
 // ------------------------------------------------------------------ varint
@@ -75,6 +76,7 @@ struct Doc {
     board: u8,
     round: u8,
     boiler: bool,
+    disabled: bool,
 }
 
 pub fn build(conn: &Connection, out_path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -83,11 +85,13 @@ pub fn build(conn: &Connection, out_path: &str) -> Result<(), Box<dyn std::error
     let mut board_map: HashMap<String, u8> = HashMap::new();
 
     let mut stmt = conn.prepare(
-        "SELECT q_id, norm_core, norm_loose, board, round, is_boilerplate, char_len FROM query",
+        "SELECT q_id, norm_core, norm_loose, board, round, is_boilerplate, char_len, \
+                disabled FROM query",
     )?;
     let mut rows = stmt.query([])?;
     let mut docs: Vec<Doc> = Vec::with_capacity(300_000);
     let mut n_core: u32 = 0;
+    let mut n_disabled: u32 = 0;
     let mut char_sum: u64 = 0;
     while let Some(r) = rows.next()? {
         let q_id: String = r.get(0)?;
@@ -97,7 +101,11 @@ pub fn build(conn: &Connection, out_path: &str) -> Result<(), Box<dyn std::error
         let round: i64 = r.get(4)?;
         let boiler: i64 = r.get(5)?;
         let clen: i64 = r.get(6)?;
+        let disabled: i64 = r.get(7)?;
         char_sum += clen.max(0) as u64;
+        if disabled != 0 {
+            n_disabled += 1;
+        }
         let has_core = !core.is_empty();
         if has_core {
             n_core += 1;
@@ -113,6 +121,7 @@ pub fn build(conn: &Connection, out_path: &str) -> Result<(), Box<dyn std::error
             board: bid,
             round: round.clamp(0, 255) as u8,
             boiler: boiler != 0,
+            disabled: disabled != 0,
         });
     }
     drop(rows);
@@ -234,6 +243,7 @@ pub fn build(conn: &Connection, out_path: &str) -> Result<(), Box<dyn std::error
     let fp = qidblob.len() as u64 ^ ((doc_count as u64) << 40) ^ (gram_count as u64);
     set64(&mut header, 112, fp);
     set64(&mut header, 120, char_sum);
+    set32(&mut header, 128, n_disabled as u32);
 
     let f = File::create(out_path)?;
     let mut w = BufWriter::with_capacity(8 << 20, f);
@@ -246,7 +256,8 @@ pub fn build(conn: &Connection, out_path: &str) -> Result<(), Box<dyn std::error
         w.write_all(&[d.board])?;
     }
     for d in docs.iter() {
-        w.write_all(&[if d.boiler { 1u8 } else { 0u8 }])?;
+        w.write_all(&[(if d.boiler { 1u8 } else { 0u8 })
+            | (if d.disabled { 2u8 } else { 0u8 })])?;
     }
     for d in docs.iter() {
         w.write_all(&[d.round])?;
@@ -300,6 +311,7 @@ pub struct Index {
     boards: Vec<String>,
     fp: u64,
     char_sum: u64,
+    n_disabled: usize,
 }
 
 impl Index {
@@ -336,6 +348,7 @@ impl Index {
             post_off: g64(96),
             fp: u64::from_le_bytes(data[112..120].try_into().unwrap()),
             char_sum: u64::from_le_bytes(data[120..128].try_into().unwrap()),
+            n_disabled: g32(128),
             boards,
             data,
         })
@@ -354,6 +367,11 @@ impl Index {
     pub fn char_sum(&self) -> u64 {
         self.char_sum
     }
+    /// 建索引时被禁用的条数。库里 disabled=1 的条数若与它不同，
+    /// 说明"标了禁用但没重建索引"，必须拦下——否则禁用会静默失效。
+    pub fn n_disabled(&self) -> usize {
+        self.n_disabled
+    }
     pub fn board_id(&self, name: &str) -> Option<u8> {
         self.boards.iter().position(|b| b == name).map(|i| i as u8)
     }
@@ -370,6 +388,11 @@ impl Index {
     #[inline]
     fn flag_boiler(&self, doc: usize) -> bool {
         self.data[self.flags_off + doc] & 1 != 0
+    }
+    /// bit1：已禁用。与 is_boilerplate 不同，这条没有"放行"开关。
+    #[inline]
+    fn flag_disabled(&self, doc: usize) -> bool {
+        self.data[self.flags_off + doc] & 2 != 0
     }
     #[inline]
     fn round(&self, doc: usize) -> u8 {
@@ -504,6 +527,9 @@ impl Searcher {
                 if idx.round(doc) as i32 != r {
                     continue;
                 }
+            }
+            if idx.flag_disabled(doc) {
+                continue; // 已禁用：永不返回（函尾发函说明、超长材料混入等）
             }
             if idx.flag_boiler(doc) {
                 continue; // 默认不发套话

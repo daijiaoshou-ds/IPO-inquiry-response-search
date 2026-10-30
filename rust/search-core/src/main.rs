@@ -372,13 +372,23 @@ fn open_index_verified(
     let db_docs: i64 = conn.query_row("SELECT COUNT(*) FROM query", [], |r| r.get(0))?;
     let db_chars: i64 =
         conn.query_row("SELECT COALESCE(SUM(char_len),0) FROM query", [], |r| r.get(0))?;
-    if idx.doc_count() as i64 != db_docs || idx.char_sum() != db_chars as u64 {
+    // 禁用条数单独对账：标了禁用却不重建索引时，篇数和字数都不变，
+    // 光看上面两个条件校验会通过，于是禁用静默失效（条目照常被检索出来）。
+    let db_banned: i64 =
+        conn.query_row("SELECT COUNT(*) FROM query WHERE disabled = 1", [], |r| r.get(0))?;
+    if idx.doc_count() as i64 != db_docs
+        || idx.char_sum() != db_chars as u64
+        || idx.n_disabled() as i64 != db_banned
+    {
         return Err(format!(
-            "索引与库不一致：索引 {} 篇 / 字数 {}，库里 {} 篇 / 字数 {}。请重新 --build-index",
+            "索引与库不一致：索引 {} 篇 / 字数 {} / 禁用 {}，库里 {} 篇 / 字数 {} / 禁用 {}。\
+             请重新 --build-index",
             idx.doc_count(),
             idx.char_sum(),
+            idx.n_disabled(),
             db_docs,
-            db_chars
+            db_chars,
+            db_banned
         )
         .into());
     }
