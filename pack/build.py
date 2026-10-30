@@ -53,8 +53,13 @@ def human(n: int) -> str:
     return "%.1f MB" % (n / 1048576)
 
 
+_T_STEP = [time.time()]
+
+
 def step(msg: str) -> None:
-    print("\n== " + msg)
+    """每步开头打时间。构建要几分钟，卡住时得能一眼看出卡在哪一步——
+    上一版没有这个，7 分钟没输出只能靠猜。"""
+    print("\n== %s   [+%.0fs]" % (msg, time.time() - _T_STEP[0]))
 
 
 def download(url: str, dest: Path) -> bool:
@@ -131,7 +136,13 @@ def main() -> None:
     t_all = time.time()
     pkg = OUT / ("%s_v%s" % (NAME, VERSION))
     if pkg.exists():
-        shutil.rmtree(pkg)
+        # 不直接 rmtree：上一版目录里有两三千个文件，会被"批量删除"保护拦下来，
+        # 构建在第一步就 abort（2026-10-29 复打时撞过一次）。改名挪开最省事，
+        # 顺手给个 _stale 前缀，攒多了自己删也行。
+        stale = OUT / ("_stale_" + pkg.name + time.strftime("_%H%M%S"))
+        pkg.rename(stale)
+        print("   上一版目录改名为 " + stale.name + "（可手动删除）")
+        shutil.rmtree(stale, ignore_errors=True)
     pkg.mkdir(parents=True)
     print("%s v%s  (数据截至 %s)  ->  %s" % (NAME, VERSION, RELEASE, pkg))
 
@@ -155,12 +166,34 @@ def main() -> None:
     target.mkdir(parents=True, exist_ok=True)
     # 必须走 subprocess（而不是 os.system）：本项目的路径含中文，
     # os.system 会让 cmd 用 OEM 码页重新解析一遍，中文路径直接报"文件名语法不正确"。
-    cmd = [sys.executable, "-m", "pip", "install", "--quiet", "--no-warn-script-location",
-           "--disable-pip-version-check", "--target", str(target), "fastapi", "uvicorn",
+    # 版本钉死成"当前 venv 里装的那一套"：
+    #   ① 读者跑到的和作者本机一致，出问题可复现；
+    #   ② 版本没变，pip 直接命中本地 wheel 缓存，不会去下"今天最新"的那个。
+    # 2026-10-29 的 v1.6 构建就卡死在这里：pip 解析到 pillow 13.0.0（venv 里是 12.3.0），
+    # 7.3 MB 那个 wheel 下载不动，整个构建停了 7 分钟没有任何输出。
+    # 升级依赖是另一件事，不该顺带发生在打包时。
+    constraints = CACHE / "constraints.txt"
+    freeze = subprocess.run([sys.executable, "-m", "pip", "freeze"],
+                            capture_output=True, text=True, encoding="utf-8").stdout
+    constraints.write_text(freeze, encoding="utf-8")
+    # 本地 wheelhouse：某些 wheel 从 files.pythonhosted.org 下来只有 20 KB/s
+    # （2026-10-29 实测 pillow 6.9 MB 要 5 分钟，pip 就干等在那儿）。
+    # 把那个 wheel 丢进 pack/_cache/wheels/ 就会走本地文件，不再碰网络。
+    house = CACHE / "wheels"
+    house.mkdir(parents=True, exist_ok=True)
+    cmd = [sys.executable, "-m", "pip", "install", "--no-warn-script-location",
+           "--progress-bar", "off", "--disable-pip-version-check",
+           "--timeout", "20", "--retries", "2",
+           "--find-links", str(house),
+           "-c", str(constraints), "--target", str(target), "fastapi", "uvicorn",
            # 网页上传整份函要用的解析组件（pdfplumber 依赖 pdfminer.six + Pillow，
            # python-docx 依赖 lxml，合计约 37 MB 解压后）
            # openpyxl 是导出《参考答案指引》用的；server 会 import guide.py，缺了直接起不来
-           "pdfplumber", "python-docx", "openpyxl"]
+           "pdfplumber", "python-docx", "openpyxl",
+           # 上传接口用了 File()/Form()，FastAPI 要求 python-multipart。
+           # 缺了不是"上传不能用"，而是 app 在定义路由时就抛 RuntimeError，整个服务起不来
+           # ——v1.5 的离线包就栽在这（本机 venv 里早有这个包，所以本机一直没暴露）。
+           "python-multipart"]
     print("   " + " ".join(cmd[3:]))
     if subprocess.run(cmd).returncode != 0:
         sys.exit("pip install 失败")
