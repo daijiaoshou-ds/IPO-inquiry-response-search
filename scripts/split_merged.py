@@ -51,7 +51,8 @@ LAYERS = [
     # [（(] 同时覆盖全角（）与英文 ()，实测库里两种都有
     ("（1）", re.compile(r'[（(]\s*([1-9１-９])\s*[）)]')),
     # 1）2）这种没有左括号的，前面不能是括号，否则那是 (1) 的右半边
-    ("1）",  re.compile(r'(?<![\dA-Za-z.)）（(])([1-9１-９])\s*[）)](?!\d)')),
+    # 前面是汉字也不认："对三氟甲硫基硝基苯（半成品1）收率"里的 1）不是编号
+    ("1）",  re.compile(r'(?<![\dA-Za-z.)）（(\u4e00-\u9fa5])([1-9１-９])\s*[）)](?!\d)')),
     ("1、",  re.compile(BOUND + r'\s*([1-9１-９])\s*[、](?!\d)')),
     # 点号编号在正文里太容易撞（"5.5 元""第 3.1 条"），要求 ≥3 段才认
     ("1.",   re.compile(BOUND + r'\s*([1-9１-９])\s*[.．](?!\d)')),
@@ -60,7 +61,9 @@ LAYERS = [
 # 拆出来的段还得"像问题"。同一套编号体例，既可能是真小问，也可能是回复里
 # "1、查阅了…2、取得了…"或合同条款"1）卖方违反…"。实测 1、/1）那 29 条里
 # 一半是回复/正文，所以这道判据必须有，不能只看编号。
-Q_RE = re.compile(r'是否|说明|披露|分析|列示|论证|补充|请[^，。；]{0,8}(?:说明|披露|核查|发表)')
+Q_RE = re.compile(
+    r'是否|能否|说明|披露|分析|列示|论证|补充|原因|合理性|依据|标准|构成|金额|比例'
+    r'|具体|情况|安排|机制|措施|进展|请[^，。；]{0,8}(?:说明|披露|核查|发表)')
 Q_RATIO = 0.6      # 至少六成段像问题才拆
 
 
@@ -99,8 +102,19 @@ def find_seq(text: str) -> tuple[str, list[tuple[int, int, int]]]:
     return "", []
 
 
+# "对（1)(2)(3)核查并发表明确意见"——这是引用前面几小问，不是分项本身。
+# 特征：整段很短，且以"对"起头。
+CITE_RE = re.compile(r'^[对按]\s*[（(]')
+
+
 def split_text(text: str) -> list[tuple[str, str]]:
-    """切成 [(item_no, 段文本)]。第一段若在编号之前还有实质内容，单独作一条。"""
+    """切成 [(item_no, 段文本)]。第一段若在编号之前还有实质内容，单独作一条。
+
+    两道门槛：编号要成序列（find_seq），内容要像问题（Q_RATIO）。
+    只看编号会把回复/合同/表格切碎，只内容不看编号会把整段判成一条。
+    """
+    if len(text) < 40 and CITE_RE.match(text.strip()):
+        return []
     name, seq = find_seq(text)
     if not seq:
         return []
@@ -134,6 +148,20 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         )""")
 
 
+# PDF 字体映射错位会把编号整个吞掉，留下空括号：
+#   "（）结合公司设立时…（）说明年间…（）说明历史沿革…"
+# 这类结构完整、只是编号没了，按出现顺序补回 1,2,3 就能正常拆。
+# 只处理"空括号 ≥2 个"的（单个别补：那多半是"对问题（）进行核查"这类引用）。
+EMPTY_PAREN = re.compile(r'[（(]\s*[）)]')
+
+
+def restore_empty_numbering(text: str) -> str:
+    if len(EMPTY_PAREN.findall(text)) < 2:
+        return text
+    it = iter(range(1, 40))
+    return EMPTY_PAREN.sub(lambda m: '（%d）' % next(it, 1), text)
+
+
 def scan(conn: sqlite3.Connection, min_seg: int, lo: int, hi: int) -> list[dict]:
     rows = conn.execute(
         "SELECT q_id, letter_id, question_id, question_no, seq_in_question, seq_in_letter,"
@@ -144,11 +172,11 @@ def scan(conn: sqlite3.Connection, min_seg: int, lo: int, hi: int) -> list[dict]
         if conn.execute("SELECT 1 FROM query_split WHERE parent_q_id=?",
                         (r["q_id"],)).fetchone():
             continue                        # 已经拆过
-        segs = split_text(r["raw_text"])
+        fixed = restore_empty_numbering(r["raw_text"])
+        segs = split_text(fixed)
         if len(segs) < min_seg:
             continue
-        out.append({"row": r, "segs": segs,
-                    "style": find_seq(r["raw_text"])[0]})
+        out.append({"row": r, "segs": segs, "style": find_seq(fixed)[0]})
     return out
 
 
@@ -254,8 +282,9 @@ def main() -> None:
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--undo", action="store_true")
     ap.add_argument("--min-seg", type=int, default=2, help="至少切出几段才拆（默认 2）")
-    ap.add_argument("--lo", type=int, default=100)
-    ap.add_argument("--hi", type=int, default=900)
+    # 默认扫全库：上一版限定 100~900，漏掉 61~98 字的 5 条合并题
+    ap.add_argument("--lo", type=int, default=0)
+    ap.add_argument("--hi", type=int, default=10 ** 6)
     ap.add_argument("--db", default=str(DB))
     a = ap.parse_args()
 

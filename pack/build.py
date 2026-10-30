@@ -26,7 +26,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "1.6.5"
+VERSION = "1.6.6"
 RELEASE = time.strftime("%Y-%m")      # 数据截止月份，也是发布日期
 AUTHOR = "呆叫兽"
 NAME = "问询检索"
