@@ -175,7 +175,14 @@ MATERIAL_RE = re.compile(
 )
 
 SUBHEAD_RE = re.compile(r"（\s*(\d{1,2})\s*）")
-ITEM_RE = re.compile(r"(①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩|（\s*\d{1,2}\s*）)")
+# 半角 (1) 必须一起认。2026-10-30 发现：泰凌微电子、贝克制药、华曙高科技、
+# 英方软件、索辰信息科技这几家用英文括号写小问编号，老版本只认全角 （1），
+# 整段小问被并成一条 200~900 字的长 query（实测 213 条）。PDF 已从磁盘清理，
+# 只能用 scripts/split_merged.py 原地拆；但规则本身要修，否则新导入的函还漏。
+# 中括号的 （一）（二）**故意不加**：回复正文也用这套编号，REPLY_BODY_RE 靠它
+# 区分问与答，加进来会把回复内容切成"小问"。
+ITEM_RE = re.compile(
+    r"(①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩|（\s*\d{1,2}\s*）|\(\s*\d{1,2}\s*\)(?!\d))")
 ITEM_NO_RE = re.compile(r"[①②③④⑤⑥⑦⑧⑨⑩]")
 
 
@@ -240,8 +247,15 @@ def find_subheads(text: str) -> list[tuple[int, int, str, str]]:
 
 
 def split_items(seg: str) -> list[tuple[str, str]]:
-    """把问题片段切成最小 query。返回 [(序号, 文本)]。"""
+    """把问题片段切成最小 query。返回 [(序号, 文本)]。
+
+    编号只有一个时不切：那是引用（"详见(1)招股说明书"），不是分项。
+    分项至少有 (1)(2) 两个才成立——这条同时挡住了金额括号、年份括号。
+    """
     parts = ITEM_RE.split(seg)
+    if (len(parts) - 1) // 2 < 2:
+        t = seg.strip()
+        return [("", t)] if t else []
     items: list[tuple[str, str]] = []
     if parts[0].strip():
         items.append(("", parts[0].strip()))
