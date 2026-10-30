@@ -56,6 +56,14 @@ CLAUSE_MIN_LEN = 12
 # 只给靠前的那批补算分句，其余的保持全局分。
 CLAUSE_WORK_BUDGET = 40_000
 SENT_RE = re.compile(r"[。；！？!?]")
+# 一条 query 按 ；。 切成多段后，子段 q_id 是"父ID-c2 / -c3"。同一组的段讲的是
+# 同一段话，展示时只留最高分那条；但同一道题里**不同小问**是不同的事，各自都要能出现。
+# 所以去重的粒度是"原 query"（把 -cN 后缀剥掉），不是 question_id（整个问题节）。
+_SEG_SUFFIX_RE = re.compile(r"-c\d+$")
+
+
+def root_qid(q_id: str) -> str:
+    return _SEG_SUFFIX_RE.sub("", q_id)
 
 BOILERPLATE_PENALTY = 0.55
 TOP_FOR_LCS = 300
@@ -422,6 +430,18 @@ def search_one(conn: sqlite3.Connection, question: str, *, board=None, chapter=N
         })
     out.sort(key=lambda x: (-x["score"], -x["exact"], x["q_id"]))
 
+    # 同一条原 query 切出来的多段只留最高分那条：三段 `-c2/-c3` 讲的是同一段话，
+    # 全显示出来就是同一处地方占三个位子。注意粒度是"原 query"而不是"题"——
+    # 同一道题里的小问 2 和小问 5 是两件事，各自都要能出现。
+    dedup, seen_root = [], set()
+    for h in out:
+        r = root_qid(h["q_id"])
+        if r in seen_root:
+            continue
+        seen_root.add(r)
+        dedup.append(h)
+    out = dedup
+
     # 只给最终要展示的这几条算高亮片段，省时间
     for h in out[:top]:
         core, idx = norm_core_map(h["raw_text"])
@@ -612,10 +632,17 @@ def _grouped_via_rust(conn: sqlite3.Connection, eng, text: str, **kw) -> dict:
     for p, hits in zip(parts, hits_by_part):
         q_core = norm_core(p)
         out = []
+        seen_root: set[str] = set()
         for h in hits:
             r = rows.get(h["q_id"])
             if r is None:
                 continue
+            # 同一条原 query 切出来的多段只留最高分那条（详见 root_qid 的注释）。
+            # Rust 侧已按分数降序，第一次遇到的就是最高的。
+            root = root_qid(h["q_id"])
+            if root in seen_root:
+                continue
+            seen_root.add(root)
             core, idx = norm_core_map(r["raw_text"])
             spans = _runs_to_spans(common_runs(q_core, core), idx, 1) if core else []
             if spans:
@@ -637,9 +664,9 @@ def _grouped_via_rust(conn: sqlite3.Connection, eng, text: str, **kw) -> dict:
                 "from_input": p,
             }
             out.append(d)
-            old = merged.get(d["q_id"])
+            old = merged.get(root)
             if old is None or d["score"] > old["score"]:
-                merged[d["q_id"]] = d
+                merged[root] = d
         strong, weak = covered_spans(p, [x["raw_text"] for x in out], idf)
         total = sum(e - s for s, e in strong) + sum(e - s for s, e in weak)
         groups.append({"text": p, "hits": out,

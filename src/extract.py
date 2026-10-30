@@ -246,6 +246,60 @@ def find_subheads(text: str) -> list[tuple[int, int, str, str]]:
     return out
 
 
+# ---------------------------------------------------------------- 句内再切一刀
+#
+# 编号（（1）/（一）/1、）只切到"一层小问"，但一层小问里常常还并着 2~5 个并列问句，
+# 监管是用**分号**把它们隔开的：
+#
+#   "……转让所持股权的原因；胡敏、王力受让股权的资金来源，胡敏时任单位对其对外
+#    投资有无限制，锐能科技向杨璐偿还出资款的过程及资金流向"
+#
+# 一个分句就是一个完整的问句。不切的话有两个后果：
+#   ① 库侧一条 300 字里只有 40 字与提问相关，余弦被稀释，排序吃亏；
+#   ② 参考给用户看的时候是一大段，得自己找那半句。
+#
+# 实测（2026-10-30，50 个特异句探针，GT 用全库逐字包含判定）：
+#   hit@5 0.960 → 0.960（不掉）  MRR 0.830 → 0.850（升）
+# 也就是说这一步**不是拿召回换粒度**，是白拿。
+CLAUSE_RE = re.compile(r"[。；！？;!?]")
+CLAUSE_MIN = 8           # 短于此的并到相邻段（"请说明原因"这种 5 字碎片）
+# 切出来只剩"2.关于毛利率"这种下一题的标题，是题号边界，不是问句，直接丢。
+# 只认"题号 + 关于 + 短标题"且后面没有逗号：`1.关于收入确认，请发行人说明…`
+# 这种是题号与正文贴在同一句，属于本题内容，不能丢。
+_NEXT_Q = re.compile(r"^(?:问题\s*\d{1,3}|\d{1,3}\s*[.、．]\s*关于[^，。；]{0,24})$")
+
+
+def split_clauses(text: str) -> list[str]:
+    """按句号/分号再切一层。切不出 ≥2 段时返回空列表（表示"不用切"）。
+
+    太短的分句不丢，并进相邻段——"说明原因"单独成条既检索不准，
+    也会让界面上一堆 6 字碎片。宁可少一段，也不要丢内容。
+    """
+    parts = [p.strip(" ，,、：:；;。\u3000") for p in CLAUSE_RE.split(text)]
+    if len(parts) < 2:
+        return []
+    kept = [p for p in parts if p and not _NEXT_Q.match(p)]
+    if len(kept) < len([p for p in parts if p]):
+        # 丢掉了"2.关于毛利率"这种题号边界：剩下的那半句要原样交回去，
+        # 否则调用方会拿整段原文（含题号标题）当一条，反而更脏。
+        return kept if kept else []
+    parts = kept
+    if len(parts) < 2:
+        return []
+    out: list[str] = []
+    for p in parts:
+        if out and len(p) < CLAUSE_MIN:
+            out[-1] = out[-1] + "，" + p
+        else:
+            out.append(p)
+    if len(out) < 2:
+        return []
+    if len(out[0]) < CLAUSE_MIN:                 # 首段太短就并到第二段
+        out[1] = out[0] + "，" + out[1]
+        out = out[1:]
+    return out if len(out) >= 2 else []
+
+
 def split_items(seg: str) -> list[tuple[str, str]]:
     """把问题片段切成最小 query。返回 [(序号, 文本)]。
 
@@ -624,21 +678,28 @@ def _extract_from_body(body: str, q: dict) -> list[Query]:
             raw = _clean(raw)
             if len(raw) < 6 or _is_fragment(raw):
                 continue
-            out.append(Query(
-                seq=0,
-                chapter=q["chapter"],
-                question_no=q["no"],
-                question=q["title"],
-                sub_question=sub_title_at(m.start()),
-                asker=asker,
-                item_no=item_no,
-                raw_text=raw,
-                norm_strict=norm_strict(raw),
-                norm_loose=norm_loose(raw),
-                is_boilerplate=is_boilerplate(raw),
-                page_start=q["page_start"],
-                page_end=q["page_end"],
-            ))
+            # 再按 ；。 切一层：一条小问里并着几个问句时，各自成条。
+            # 切出来的段沿用原编号，加 .1/.2 后缀，便于回溯是哪个小问拆出来的。
+            pieces = split_clauses(raw) or [raw]
+            for k, piece in enumerate(pieces, 1):
+                piece = _clean(piece)
+                if len(piece) < 6 or _is_fragment(piece):
+                    continue
+                out.append(Query(
+                    seq=0,
+                    chapter=q["chapter"],
+                    question_no=q["no"],
+                    question=q["title"],
+                    sub_question=sub_title_at(m.start()),
+                    asker=asker,
+                    item_no=(item_no + "." + str(k)) if (item_no and len(pieces) > 1) else item_no,
+                    raw_text=piece,
+                    norm_strict=norm_strict(piece),
+                    norm_loose=norm_loose(piece),
+                    is_boilerplate=is_boilerplate(piece),
+                    page_start=q["page_start"],
+                    page_end=q["page_end"],
+                ))
     return out
 
 
@@ -652,12 +713,15 @@ def split_user_input(text: str) -> list[str]:
 
     设计文档第 5 节只写了"搜一个问题"，但实际用法是整段粘贴，
     所以输入侧必须复用同一套切分器，粒度才对得齐。
+
+    切两遍：先按编号切小问，再按 ；。 切句（split_clauses）。两遍都要做，
+    否则"库里是分句、输入是小问"这种不对称会让匹配度白白损失。
     """
     marks = list(ASKER_RE.finditer(text))
     if not marks:
         items = [_clean(t) for _no, t in split_items(text)]
         items = [t for t in items if len(t) >= 6]
-        return items or [text.strip()]
+        return _clause_split_all(items) or [text.strip()]
 
     subs = find_subheads(text)
     sub_starts = [s[0] for s in subs]
@@ -674,4 +738,26 @@ def split_user_input(text: str) -> list[str]:
             raw = _clean(raw)
             if len(raw) >= 6:
                 out.append(raw)
-    return out or [text.strip()]
+    # 兜底：整段只切出"核查并发表明确意见"这类程序性句子时，out 会是空的。
+    # 这时不能把整段原文当一条返回——原文里往往还有几个真问题（在第一个
+    # "请保荐机构…"之前）。按句号分号整段切一遍，比整段吞下去强。
+    return _clause_split_all(out) or _clause_split_all([text]) or [text.strip()]
+
+
+def _clause_split_all(items: list[str]) -> list[str]:
+    """对每个小问再切句，保持顺序。切不出两段的原样保留。
+
+    输入侧比库侧多一道过滤：切出来的"请保荐机构核查并发表明确意见"不要。
+    它本身是程序性要求，单独成组只会让用户看到一组全是同一句模板的结果。
+    （库侧不丢，只打 is_boilerplate 标记——那边要保内容完整。）
+    """
+    out: list[str] = []
+    for t in items:
+        for piece in split_clauses(t) or [t]:
+            piece = _clean(piece)
+            if len(piece) < 6:
+                continue
+            if len(piece) <= 32 and piece.endswith("发表明确意见"):
+                continue
+            out.append(piece)
+    return out
