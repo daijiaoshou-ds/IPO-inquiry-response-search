@@ -86,12 +86,12 @@
 
   /* ---------- 顶栏 ---------- */
   header { position: sticky; top: 0; z-index: 30; height: var(--head-h);
-           padding: 0 22px; display: flex; align-items: center;
+           padding: 0 18px; display: flex; align-items: center;
            background: color-mix(in srgb, var(--panel) 84%, transparent);
            backdrop-filter: saturate(180%) blur(16px);
            border-bottom: 1px solid var(--border); }
   .head-inner { display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
-                max-width: 1760px; width: 100%; margin: 0 auto; }
+                max-width: 2200px; width: 100%; margin: 0 auto; }
   .brand { display: flex; align-items: center; gap: 11px; }
   .logo { flex: none; width: 38px; height: 38px; border-radius: 12px; display: grid;
           place-items: center; font-size: 18px; background: var(--grad);
@@ -112,8 +112,8 @@
   .stats b { font-size: 14.5px; color: var(--text); font-variant-numeric: tabular-nums; }
 
   /* ---------- 布局 ---------- */
-  main { display: flex; align-items: flex-start; max-width: 1760px; margin: 0 auto;
-         padding: 20px 22px 96px; }
+  main { display: flex; align-items: flex-start; max-width: 2200px; margin: 0 auto;
+         padding: 20px 18px 96px; }
   section { flex: 1 1 auto; min-width: 0; }
   aside { flex: 0 0 var(--aside-w); position: sticky; top: calc(var(--head-h) + 18px);
           align-self: flex-start; max-height: calc(100vh - var(--head-h) - 36px);
@@ -126,6 +126,24 @@
                      transition: background .15s ease, height .15s ease; }
   .splitter:hover::after, .splitter:focus-visible::after, .splitter.dragging::after {
     background: var(--accent); height: 70px; }
+
+  /* 收起侧栏：正文能多出约 300px。窗口不到 1600 时这比任何 max-width 调整都管用。 */
+  body.aside-off aside { display: none; }
+  body.aside-off .splitter { flex: 0 0 14px; cursor: pointer; }
+  body.aside-off .splitter::after {
+    content: '\203A'; width: 22px; height: 34px; border-radius: 7px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--muted); font-size: 17px; line-height: 1;
+    display: grid; place-items: center; }
+  body.aside-off .splitter:hover::after {
+    background: var(--accent-soft); border-color: var(--accent); color: var(--accent); height: 34px; }
+  .sec-title .toggle { margin-left: auto; width: 22px; height: 22px; padding: 0; flex: none;
+                       display: grid; place-items: center; cursor: pointer;
+                       font-size: 15px; line-height: 1; color: var(--muted);
+                       background: var(--panel-2); border: 1px solid var(--border);
+                       border-radius: 7px; }
+  .sec-title .toggle:hover { color: var(--accent); border-color: var(--accent);
+                             background: var(--accent-soft); }
 
   .panel { background: var(--panel); border: 1px solid var(--border);
            border-radius: 16px; padding: 15px 17px; box-shadow: var(--shadow); }
@@ -407,6 +425,9 @@
     main { flex-direction: column; padding: 16px; }
     aside { flex: none; width: auto; position: static; max-height: none; overflow: visible;
             order: 2; margin-top: 16px; }
+    /* 窄屏下侧栏是堆在下面的，分隔条又隐藏了：收起状态会让用户再也点不到那个按钮，
+       所以这一档强制展开。 */
+    body.aside-off aside { display: block; }
     .splitter { display: none; }
     section { order: 1; }
     .head-actions { margin-left: 0; width: 100%; flex-wrap: wrap; }
@@ -442,7 +463,9 @@
 <main>
   <aside>
     <div class="panel">
-      <div class="sec-title">检索范围</div>
+      <div class="sec-title">检索范围
+        <button class="toggle" id="hideAside" title="收起侧栏，让正文更宽" aria-label="收起侧栏">&#8249;</button>
+      </div>
       <div class="board-tabs" id="boards"></div>
       <label class="field" style="margin-top:14px">
         <span>轮次</span>
@@ -671,8 +694,19 @@ function num(n) {
     root.style.setProperty('--aside-w', v + 'px');
     try { localStorage.setItem('asideW2', String(v)); } catch (e) {}
   }
+  // 收起/展开。收起记 localStorage，刷新后还是收起——不然每次进来都要再点一次。
+  var btn = $('hideAside');
+  function setOff(off) {
+    document.body.classList.toggle('aside-off', off);
+    sp.title = off ? '点一下展开侧栏' : '拖动调整宽度；双击复位';
+    try { localStorage.setItem('asideOff', off ? '1' : '0'); } catch (e) {}
+  }
+  try { setOff(localStorage.getItem('asideOff') === '1'); } catch (e) {}
+  btn.onclick = function () { setOff(true); };
+
   var drag = null;
   sp.addEventListener('pointerdown', function (e) {
+    if (document.body.classList.contains('aside-off')) { return; }   // 收起时只当按钮用
     drag = { x: e.clientX, w: aside.getBoundingClientRect().width };
     sp.setPointerCapture(e.pointerId);
     sp.classList.add('dragging');
@@ -691,6 +725,15 @@ function num(n) {
   }
   sp.addEventListener('pointerup', end);
   sp.addEventListener('pointercancel', end);
+  sp.addEventListener('click', function () {          // 收起态下点分隔条 = 展开
+    if (document.body.classList.contains('aside-off')) { setOff(false); }
+  });
+  sp.addEventListener('keydown', function (e) {
+    if (document.body.classList.contains('aside-off') &&
+        (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowLeft')) {
+      setOff(false); e.preventDefault();
+    }
+  });
   sp.addEventListener('dblclick', function () {
     root.style.setProperty('--aside-w', DEF + 'px');
     try { localStorage.removeItem('asideW2'); } catch (e) {}
