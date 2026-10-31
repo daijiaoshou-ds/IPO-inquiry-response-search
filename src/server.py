@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import io
+import mimetypes
 import os
 import re
 import secrets
@@ -22,6 +23,7 @@ from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .guide import build_workbook, guess_company, make_meta, rows_from_letter
@@ -32,7 +34,35 @@ ROOT = Path(__file__).resolve().parent.parent
 WEBUI = Path(__file__).with_name("webui")
 DEFAULT_DB = ROOT / "data" / "queries.db"
 
+# 前端是原生 ES Module，浏览器只看 Content-Type 决定能不能当模块跑。
+# Windows 上注册表里 .js 常被登记成 text/plain（装了某些编辑器就会），
+# 那样浏览器直接拒绝加载、页面一片空白，而且报错藏在控制台里很难往这上面想。
+# 显式注册一次，不依赖系统 mime 表。
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("image/svg+xml", ".svg")
+
 app = FastAPI(title="问询回复检索", docs_url=None, redoc_url=None)
+
+
+class _Assets(StaticFiles):
+    """静态资源（/css、/js）。
+
+    必须给 no-cache：不给的话浏览器按 Last-Modified 做启发式缓存，
+    改完 CSS/JS 刷新还是旧的 —— 首页那条 no-store 解决的是同一个坑，
+    只是现在文件从 1 个变成了 12 个。no-cache 不是不缓存，是每次都回来问一句，
+    没变就是 304（Starlette 的 FileResponse 自己会按 ETag/Last-Modified 判）。
+    """
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
+for _name in ("css", "js"):
+    if (WEBUI / _name).is_dir():
+        app.mount("/" + _name, _Assets(directory=str(WEBUI / _name)), name=_name)
 
 
 @app.on_event("startup")

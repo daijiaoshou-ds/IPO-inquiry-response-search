@@ -13,7 +13,7 @@ import time
 sys.path.insert(0, ".")
 
 from src.normalize import norm_core, norm_loose, norm_strict
-from src.search import (CLAUSE_WORK_BUDGET, FTS_POOL_CAP, LCS_CHAR_BUDGET, TOP_FOR_LCS,
+from src.search import (FTS_POOL_CAP, LCS_CHAR_BUDGET, TOP_FOR_LCS,
                         QuerySide, fts_terms, gram_norm, lcs_span, load_idf, ngrams,
                         query_clauses, similarity_side, _runs_to_spans, common_runs)
 from src.normalize import norm_core_map

@@ -1,0 +1,27 @@
+@media (max-width: 1240px) {
+  .rb-src { display: none; }
+  .ledger span:nth-child(3) { display: none; }
+}
+@media (max-width: 980px) {
+  .shell { flex-direction: column; padding: 16px 16px 100px; }
+  .topbar { padding: 0 16px; }
+  .ledger { display: none; }
+  .rail { order: 2; width: 100%; flex: none; position: static; max-height: none; margin-top: 16px; }
+  /* 窄屏侧栏堆在下面、把手又隐藏了，收起态会把人锁在外面，这一档强制展开 */
+  body.rail-off .rail { display: block; }
+  .gutter { display: none; }
+  .stage { order: 1; width: 100%; }
+  .rbar { position: static; }
+  .mode i { display: none; }
+  .mode-tag { display: none; }
+  .hit-co { font-size: 15px; }
+  .quote { font-size: 14.5px; }
+}
+@media (max-width: 560px) {
+  .brand-text span { display: none; }
+  .topbar { gap: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  html { scroll-behavior: auto; }
+}

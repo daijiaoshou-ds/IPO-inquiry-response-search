@@ -26,7 +26,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "1.7"
+VERSION = "1.7.1"
 RELEASE = time.strftime("%Y-%m")      # 数据截止月份，也是发布日期
 AUTHOR = "呆叫兽"
 NAME = "问询检索"
@@ -205,8 +205,9 @@ def main() -> None:
     (appdir / "src").mkdir(parents=True)
     for name in APP_FILES:
         shutil.copy2(ROOT / "src" / name, appdir / "src" / name)
-    (appdir / "src" / "webui").mkdir()
-    shutil.copy2(ROOT / "src" / "webui" / "index.html", appdir / "src" / "webui" / "index.html")
+    # 前端是 index.html + css/ + js/ 三块（原生 ES Module，无构建产物），整目录拷。
+    # 只拷 index.html 会得到一个空壳：页面能开，样式和脚本全 404。
+    shutil.copytree(ROOT / "src" / "webui", appdir / "src" / "webui")
 
     # 页面里注入版本/截止日期（源文件保持通用写法）
     page = appdir / "src" / "webui" / "index.html"

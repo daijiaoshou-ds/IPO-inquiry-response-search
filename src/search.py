@@ -141,11 +141,6 @@ def ngrams(s: str, n: int = GRAM_N) -> collections.Counter:
     return collections.Counter(s[i:i + n] for i in range(len(s) - n + 1))
 
 
-def bigrams(s: str) -> collections.Counter:
-    """早期 probe 脚本用过的 2-gram，保留以免那些脚本失效。"""
-    return ngrams(s, 2)
-
-
 def similarity_pair(A: collections.Counter, B: collections.Counter,
                     weight: Idf) -> tuple[float, float]:
     """返回 (对称余弦, query 覆盖度)。
@@ -236,18 +231,6 @@ def cosine_counters(A: collections.Counter, B: collections.Counter, weight: Idf)
         vb = cb * w
         nb += vb * vb
     return (num / math.sqrt(na * nb)) if na and nb else 0.0
-
-
-def cosine_weighted(a: str, b: str, weight: Idf) -> float:
-    """IDF 加权的 n-gram 余弦相似度。
-
-    余弦优于 Dice（probe/ab_test.py 实测）：
-    等权 Dice 会被"是否符合《企业会计准则》的规定"这种通用表达带偏，
-    IDF-Dice 又会因为分母把不匹配的稀有词也算进去而把分数压扁；
-    余弦在"运保费收入确认"这种库里没有原题、只能找近邻的场景下，
-    能把真正相关的"总额法确认收入""单项履约义务"排到前面。
-    """
-    return cosine_counters(ngrams(a), ngrams(b), weight)
 
 
 def lcs_span(a: str, b: str) -> tuple[int, int]:

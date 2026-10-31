@@ -17,7 +17,7 @@ from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
-from .extract import Letter, scan_dir, scan_letter
+from .extract import Letter, scan_letter
 from .normalize import norm_core
 from .search import GRAM_N
 

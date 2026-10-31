@@ -1,0 +1,123 @@
+/* ============================================================
+   视觉口径（2026-10-30 二次重做）
+   叙事：纸 + 墨 + 荧光笔。
+     · 底是暖白纸，卡片是更亮的纸，层次靠"发丝边框 + 极淡投影"；
+     · 强调色只有一种墨蓝，留给主按钮 / 选中 / 链接；
+     · 逐字命中用荧光笔黄（mark）—— 这是全页唯一的暖色，
+       因为它就是"被标出来的那句话"，是产品的核心动作。
+   字阶六档：10.5 / 11.5 / 12.5 / 13.5 / 16 / 20（引用正文 15 单列）。
+   ============================================================ */
+:root {
+  /* 纸与墨 */
+  --paper: #f2f1ec;
+  --surface: #ffffff;
+  --surface-2: #faf9f5;
+  --surface-3: #efeee8;
+  --ink: #15171c;
+  --ink-2: #474e59;
+  --ink-3: #7c8492;
+  --line: #e6e3d9;
+  --line-2: #d4d0c3;
+
+  /* 唯一的强调色：墨蓝 */
+  --brand: #33477f;
+  --brand-2: #4a5fa3;
+  --brand-soft: #eceff8;
+  --brand-line: rgba(51, 71, 127, .2);
+
+  /* 四档相似度 */
+  --b-high: #1c7a54;
+  --b-high-bg: #e7f4ed;
+  --b-mid: #9a6a12;
+  --b-mid-bg: #faf0da;
+  --b-low: #55637a;
+  --b-low-bg: #eef1f5;
+  --b-min: #98a1ae;
+  --b-min-bg: #f2f2ef;
+
+  /* 荧光笔 */
+  --mark: linear-gradient(180deg, rgba(255, 214, 102, 0) 6%, #ffe9a6 6%,
+                         #ffe9a6 93%, rgba(255, 214, 102, 0) 93%);
+
+  --sh-1: 0 1px 2px rgba(24, 26, 32, .04), 0 1px 3px rgba(24, 26, 32, .03);
+  --sh-2: 0 2px 4px -1px rgba(24, 26, 32, .06), 0 10px 24px -14px rgba(24, 26, 32, .22);
+  --sh-3: 0 4px 10px -2px rgba(24, 26, 32, .05), 0 28px 60px -32px rgba(24, 26, 32, .3);
+
+  --rail-w: 292px;
+  --head-h: 62px;
+
+  --ease: cubic-bezier(.32, .72, .28, 1);
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+}
+:root[data-theme="dark"] {
+  --paper: #0d0f12;
+  --surface: #15181d;
+  --surface-2: #101317;
+  --surface-3: #1b1f26;
+  --ink: #e9ebef;
+  --ink-2: #a6aeb9;
+  --ink-3: #6f7885;
+  --line: #23272f;
+  --line-2: #31363f;
+
+  --brand: #8f9ce6;
+  --brand-2: #a3aff0;
+  --brand-soft: #1a1e2c;
+  --brand-line: rgba(143, 156, 230, .26);
+
+  --b-high: #46c98d;
+  --b-high-bg: #11291f;
+  --b-mid: #dda94a;
+  --b-mid-bg: #2a2213;
+  --b-low: #98a6bd;
+  --b-low-bg: #1a1f27;
+  --b-min: #6d7684;
+  --b-min-bg: #171a1f;
+
+  --mark: linear-gradient(180deg, rgba(255, 206, 84, 0) 6%, rgba(255, 206, 84, .24) 6%,
+                         rgba(255, 206, 84, .24) 93%, rgba(255, 206, 84, 0) 93%);
+
+  --sh-1: 0 1px 2px rgba(0, 0, 0, .5);
+  --sh-2: 0 2px 6px rgba(0, 0, 0, .45), 0 12px 26px -16px rgba(0, 0, 0, .8);
+  --sh-3: 0 4px 12px rgba(0, 0, 0, .5), 0 30px 60px -34px #000;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 13.5px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+        "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+/* 极淡的点阵，给纸一点纹理。不做光晕、不做大色块梯度。 */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image: radial-gradient(circle at 1px 1px, rgba(21, 23, 28, .045) 1px, transparent 0);
+  background-size: 24px 24px;
+  opacity: .55;
+}
+:root[data-theme="dark"] body::before { background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, .05) 1px, transparent 0); opacity: .5; }
+body.resizing { cursor: col-resize; user-select: none; }
+
+::selection { background: rgba(74, 95, 163, .2); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border: 3px solid transparent;
+                            background-clip: content-box; border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-3); background-clip: content-box; }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+
+svg { display: block; }
+.i { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.i svg { width: 1em; height: 1em; stroke: currentColor; fill: none;
+         stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.mono { font-family: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+        font-variant-ligatures: none; }

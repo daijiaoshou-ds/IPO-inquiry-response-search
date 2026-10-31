@@ -200,8 +200,8 @@ src/
   qc.py           入库质量自检（8 项）
   search.py       检索与排序（分发：Rust 内核可用就走它，否则自己算）
   engine_rust.py  Rust 内核的客户端（独立进程，启动失败/出错自动回退）
-  server.py       FastAPI 服务（单页前端，无构建步骤）
-  webui/index.html
+  server.py       FastAPI 服务（顺带托管 webui/ 的静态资源）
+  webui/          前端：index.html 只有结构，css/ 四层，js/ 九个 ES Module
 rust/search-core/ Rust 检索内核：4-gram 倒排索引 + IDF 加权打分（可选加速）
 eval/             对照集与验收脚本（make_golden.py / compare.py）
 scripts/          建库、导出公开仓库、基准测试、PDF 修复、参考答案指引等工具
