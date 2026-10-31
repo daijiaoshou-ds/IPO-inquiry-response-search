@@ -134,7 +134,7 @@ CHAPTER_RE = re.compile(rf"^[{CN_NUM}]{{1,3}}、\s*(\S.*)$")
 # 这条规则只在 board == 新三板 时启用：北交所正文里也可能出现
 # 「1.关于…」这样的枚举，不能拿它去切北交所的问题。
 NSP_QUESTION_RE = re.compile(
-    r"^(\d{1,3})\s*[\.、]\s*(关于[^。：，；]{2,40})(?:。\s*(.*)|\s*)$")
+    r"^(\d{1,3})\s*[.．、]\s*(关于[^。：，；]{2,40})(?:[。.．]\s*(.*)|\s*)$")
 # 正文里偶有以"二、三…"开头的句子被误认成章节标题（实测 3 个章节名带逗号、
 # 长达 25 字）。章节标题是短名词短语，不含句读，据此排掉。
 CHAPTER_BAD_RE = re.compile(r"[，。；,;:：]")
@@ -152,6 +152,18 @@ QUESTION_TI_RE = re.compile(r"^第\s*(\d{1,3})\s*题\s*[、\.：:]\s*关于\S")
 # 而回复正文里的**复述**恰好也是一行裸「请发行人」，于是复述连同它后面的回答
 # 一起被当成一个问题（实测最长 1697 字，前 6 名全是它）。
 QUESTION_CN_RE = re.compile(rf"^问题\s*([{CN_NUM}]{{1,3}})\s*[\.、]?\s*(.*)$")
+# 第四种写法：深交所的审核问询函用「1. 报告期各期，发行人…」，编号后面直接是正文，
+# **没有「关于」二字**（上交所写「1.关于战略投资者」，所以上交所那批一直能认）。
+# 实测：创业板-金马游乐、深主板-长源电力/齐峰新材 三份真函，加了这条之前全部 0 题。
+# 门槛有三道，缺一不可（见 scan_letter 里的 bare_ok）：
+#   ① 一个「问题N」标题都没认出来；② 文首确实写着"审核问询函/问询问题"；
+#   ③ 编号必须接得上（1,2,3…），否则正文里的金额和百分比会被当成编号。
+# 句点有三种字形：半角 . 、全角 ．(U+FF0E)、顿号 、。深主板-长源电力那份用的
+# 是全角「1．」，只认半角时整份 0 题。
+# rest 上限 60 字、允许短到 2 字：`6.其他` 这种只有两个字的题名真实存在（宝钢包装）。
+# 下限不能设成 5，否则整道题漏掉；上限用来挡掉"1.根据……"这种超长行之外的噪声。
+BARE_NUM_RE = re.compile(r"^(\d{1,3})\s*[.．、]\s*(?![\d%％，。；、])(\S{1,60})$")
+LETTER_HEAD_RE = re.compile(r"审核问询问题|问询问题|审核问询函")
 
 # 深交所的回复里写「请保荐人、发行人律师…」，北交所写「请保荐机构」。
 # 「保荐人」必须补进来，否则创业板的提问主体整段识别不到。
@@ -469,6 +481,21 @@ def scan_letter(pdf_path: str, company: str | None = None, board: str = "北交�
     # 加一道比例闸：裸「请发行人」开头的行明显多于标题行时，就是"没标题"。
     use_ask_start = board in REPLY_SOURCED and (
         head_hits < 2 or (ask_hits >= 5 and ask_hits > 3 * head_hits))
+    # 裸编号模式：给"深交所体例的审核问询函"兜底。只在三个条件同时成立时启用——
+    # 认不出任何「问题N」标题、不是回复体裁、文首确实写着审核问询函。
+    # 这样对已入库的 4306 份不会有任何影响（它们都能认出头）。
+    head_text = "".join(l.text for l in lines[:150])
+    # 只排掉「问题N」这一族：北交所/新三板全是这种写法，不需要裸编号兜底。
+    # 「1.关于…」这种（上交所）不排——它们和裸编号可以混用，见下面的 last_no 接力。
+    qno_hits = sum(1 for l in lines
+                   if QUESTION_RE.match(l.text) or QUESTION_CN_RE.match(l.text)
+                   or QUESTION_TI_RE.match(l.text))
+    # 新三板也排掉：它们的「1.关于…」靠 NSP 就认得全，再开裸编号只会让正文里
+    # 以数字开头的句子抢戏（实测 新三板-卓海科技-r1 少掉 12 条）。
+    bare_ok = (qno_hits == 0 and board not in REPLY_SOURCED
+               and board != "新三板"
+               and bool(LETTER_HEAD_RE.search(head_text)))
+    last_no = 0
     synth_no = 0
 
     for line in lines:
@@ -521,12 +548,22 @@ def scan_letter(pdf_path: str, company: str | None = None, board: str = "北交�
                 no = int(m2.group(1))
                 title = m2.group(1) + "." + m2.group(2)
                 rest = (m2.group(3) or "").strip()
+        if no is None and bare_ok:
+            # 编号必须接上一个题号。宝钢那份 1~5 题写「1.关于…」，第 6 题只写
+            # 「6.其他」，子题是「6.1/6.2/6.3」——子题后面紧跟数字，被 (?!\d) 挡住，
+            # 正好留在题 6 的正文里。
+            m3 = BARE_NUM_RE.match(line.text)
+            if m3 and int(m3.group(1)) == last_no + 1:
+                no = last_no + 1
+                rest = m3.group(2).strip()
+                title = rest[:30]
         if no is not None:
             # 先结算上一个问题。回复文档开头的【目录】会把全部问题标题列一遍，
             # 它们没有任何正文：这种必须丢掉，否则会把编号占住，
             # 让后面真正的问题因为"编号已出现过"而被误判成正文小标题。
             close_q(cur_q)
             cur_q = None
+            last_no = max(last_no, no)
             if board in REPLY_SOURCED and no in seen_nos:
                 # 编号已出现过 = 回复正文里的小标题（如「3、关于自然人的境外账户」），
                 # 忽略它，继续待在回复模式

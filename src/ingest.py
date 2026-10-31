@@ -101,12 +101,36 @@ def read_docx_text(path: str | Path) -> str:
     return "\n".join(lines)
 
 
+# 深交所体例的审核问询函：`1．报告期各期，发行人…`，编号后面直接是正文，
+# 没有「关于」二字。跟 PDF 路径同一套判据（见 extract.py 的 BARE_NUM_RE）：
+# 只在"①②两条规则一个都没认出来 + 文首确实写着审核问询函"时启用，
+# 且编号必须接得上 1,2,3…，否则正文里的金额、百分比会被当成题号。
+BARE_HEAD_RE = re.compile(r"^(\d{1,3})\s*[.．、]\s*(?![\d%％，。；、])(\S{1,60})$")
+_HEAD_NO_RE = re.compile(r"^\s*(?:(?:问询)?问题\s*(\d{1,3})|(\d{1,3})\s*[.．、]|第\s*(\d{1,3})\s*题)")
+
+
+def _head_no(s: str) -> int | None:
+    """从题头行里取题号（三种写法任取其一）。"""
+    m = _HEAD_NO_RE.match(s)
+    if not m:
+        return None
+    for g in m.groups():
+        if g:
+            return int(g)
+    return None
+LETTER_MARK_RE = re.compile(r"审核问询问题|问询问题|审核问询函")
+
+
 def _find_heads(text: str) -> list[int]:
     """题目起始位置（字符偏移）。
 
-    两条规则取并集：
-      ① 带题号的（问题1. / 1.关于… / 一、关于…）
-      ② 题号被 Word 自动编号吃掉的：短标题行 + 下一行是正文开头
+    三条规则，按优先级：
+      ① 带题号的（问题1. / 1.关于… / 一、关于…）—— 命中就用它
+      ② 题号被 Word 自动编号吃掉的：短标题行 + 下一行是正文开头。
+         **只在 ① 一个都没认出来时启用**：① 已经认到题头，再拿这条去补，
+         会把正文里的折行（"中用于…"）和子题（"6.1关于…"）也当成新题。
+      ③ 题号接力：深交所那种裸 `1．正文`（没有"关于"）。编号必须接上一题 +1，
+         且该号没被 ① 占过——否则正文里以数字开头的句子会被当成新题。
     """
     lines = text.split("\n")
     offs, pos = [], 0
@@ -114,15 +138,41 @@ def _find_heads(text: str) -> list[int]:
         offs.append(pos)
         pos += len(ln) + 1
 
+    # ① 的题号集合，给 ③ 做"这个号已经有人占了"的判据；
+    # n_explicit 决定 ② 要不要启用（必须在循环外算一次，循环里 `not heads`
+    # 会在加进第一个题头之后变假，裕富那份因此从 11 题退化成 1 题）
+    head_nos = set()
+    n_explicit = 0
+    for ln in lines:
+        s = ln.strip()
+        if s and HEAD_RE.match(s):
+            n_explicit += 1
+            n = _head_no(s)
+            if n is not None:
+                head_nos.add(n)
+    loose = n_explicit == 0
+
     heads = []
+    last = 0
     for i, ln in enumerate(lines):
         s = ln.strip()
         if not s:
             continue
         if HEAD_RE.match(s):
             heads.append(offs[i])
+            n = _head_no(s)
+            if n is not None:
+                last = n
             continue
-        if (2 <= len(s) <= TITLE_MAX and not TITLE_BAD.search(s)
+        m_bare = BARE_HEAD_RE.match(s)
+        if (m_bare and LETTER_MARK_RE.search(text[:4000])
+                and int(m_bare.group(1)) == last + 1
+                and int(m_bare.group(1)) not in head_nos):
+            heads.append(offs[i])
+            last += 1
+            continue
+        if (loose
+                and 2 <= len(s) <= TITLE_MAX and not TITLE_BAD.search(s)
                 and not TITLE_STOP.match(s) and i + 1 < len(lines)):
             nxt = lines[i + 1].strip()
             if BODY_START_RE.match(nxt) or len(nxt) >= BODY_LONG:
